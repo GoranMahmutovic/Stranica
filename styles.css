@@ -1408,6 +1408,78 @@ tbody tr:last-child td {
   border-bottom: 0;
 }
 
+.rhythm-table-wrap {
+  border-color: rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012)),
+    var(--surface);
+}
+
+.rhythm-table {
+  min-width: 690px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.rhythm-table th {
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+  background: rgba(22, 24, 32, 0.96);
+  color: rgba(232, 234, 240, 0.72);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.rhythm-table td {
+  border-bottom-color: rgba(255, 255, 255, 0.065);
+  padding: 12px 13px;
+  color: rgba(232, 234, 240, 0.9);
+}
+
+.rhythm-table tbody tr {
+  background: rgba(255, 255, 255, 0.012);
+}
+
+.rhythm-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.026);
+}
+
+.rhythm-table tbody tr:hover {
+  background: rgba(59, 125, 255, 0.09);
+}
+
+.rhythm-table td:first-child {
+  color: var(--text);
+  font-weight: 900;
+}
+
+.rhythm-table .badge {
+  min-width: 86px;
+  justify-content: center;
+}
+
+.rhythm-table .best-row {
+  background: linear-gradient(90deg, rgba(34, 216, 110, 0.13), rgba(255, 255, 255, 0.018));
+}
+
+.rhythm-table .worst-row {
+  background: linear-gradient(90deg, rgba(255, 79, 79, 0.13), rgba(255, 255, 255, 0.018));
+}
+
+.rhythm-table .split-bar-wrap,
+.rhythm-table .spm-bar-wrap {
+  min-width: 118px;
+}
+
+.rhythm-table .split-bar,
+.rhythm-table .spm-bar {
+  height: 7px;
+  box-shadow: 0 0 16px rgba(59, 125, 255, 0.14);
+}
+
+.rhythm-table .spm-bar {
+  box-shadow: 0 0 16px rgba(255, 107, 53, 0.14);
+}
+
 .best-row {
   background: rgba(34, 216, 110, 0.045);
 }

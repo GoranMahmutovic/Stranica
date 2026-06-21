@@ -1748,6 +1748,8 @@
       for (let start = 0; start < maxDistance; start += meters) {
         const isLast = start + meters >= maxDistance;
         const end = isLast ? maxDistance : Math.min(start + meters, maxDistance);
+        const segmentDistance = end - start;
+        if (segmentDistance < meters * 0.35) continue;
         const slice = points.filter((point) => {
           const distance = point.segmentDistance;
           return isLast
@@ -1758,7 +1760,6 @@
         const startTime = interpolateSegmentTimeAtDistance(timePoints, start);
         const endTime = interpolateSegmentTimeAtDistance(timePoints, end);
         const duration = Number.isFinite(startTime) && Number.isFinite(endTime) ? endTime - startTime : NaN;
-        const segmentDistance = end - start;
         const measuredSplit = duration > 0 && segmentDistance > 0 ? duration / (segmentDistance / 500) : NaN;
         const avgSplit = Number.isFinite(measuredSplit) ? measuredSplit : average(slice.map((point) => point.pace));
         const avgSpm = average(slice.map((point) => point.rate));
@@ -2648,7 +2649,6 @@
         ${hasMultipleIntervals ? "<th>Interval</th>" : ""}
         <th>Dionica</th>
         <th>Faza</th>
-        <th>Broj zaveslaja</th>
         <th>Avg SPM</th>
         <th>Avg Split /500m</th>
         <th>Tempo</th>
@@ -2664,7 +2664,6 @@
                 ${hasMultipleIntervals ? `<td>${escapeHtml(segment.intervalLabel || `Interval ${segment.interval}`)}</td>` : ""}
                 <td>${escapeHtml(segment.label)}</td>
                 <td>${phaseBadge(segment.phase)}</td>
-                <td>${segment.strokes}</td>
                 <td>${barCell(segment.rate, minSpm, maxSpm, "spm")}</td>
                 <td class="${segment.isBest ? "best-text" : segment.isWorst ? "worst-text" : ""}">
                   ${barCell(segment.pace, minSplit, maxSplit, "split", true)}
@@ -2676,7 +2675,7 @@
             `,
           )
           .join("")
-      : `<tr><td colspan="${hasMultipleIntervals ? 9 : 8}">Nema dovoljno per-stroke podataka za dionice.</td></tr>`;
+      : `<tr><td colspan="${hasMultipleIntervals ? 8 : 7}">Nema dovoljno per-stroke podataka za dionice.</td></tr>`;
   }
 
   function renderCharts() {
@@ -3840,11 +3839,10 @@
         segment.intervalLabel || "",
         segment.label,
         segment.phase,
-        segment.strokes,
         `${formatSplitOnly(segment.pace)} /500`,
         formatNumber(segment.rate, 1),
         formatDurationTenths(segment.duration),
-      ]), ["Interval", "Dionica", "Faza", "Zaveslaji", "Split", "SPM", "Vrijeme"])}
+      ]), ["Interval", "Dionica", "Faza", "Split", "SPM", "Vrijeme"])}
     `;
   }
 
