@@ -208,17 +208,23 @@
     const id = button?.dataset.deleteSessionId || "";
     const session = state.sessions.find((item) => item.id === id);
     if (!session) return;
+    const idsToDelete = session.sourceSessionIds?.length ? session.sourceSessionIds : [id];
     const confirmed = window.confirm(
-      `Obrisati trening "${sessionTitle(session)}"?\n\nAko je trening javno objavljen, bit ce uklonjen i s javne stranice.`,
+      `Obrisati trening "${sessionTitle(session)}"?\n\n${
+        idsToDelete.length > 1 ? `Ovo ce obrisati ${idsToDelete.length} CSV treninga iz tog dana.` : "Ako je trening javno objavljen, bit ce uklonjen i s javne stranice."
+      }`,
     );
     if (!confirmed) return;
 
     button.disabled = true;
     showUploadStatus(`Brišem trening: ${sessionTitle(session)}...`);
     try {
-      await deleteRemoteSession(id);
-      deleteStoredSession(id);
-      state.sessions = state.sessions.filter((item) => item.id !== id);
+      for (const sourceId of idsToDelete) {
+        await deleteRemoteSession(sourceId);
+        deleteStoredSession(sourceId);
+      }
+      const deleteSet = new Set(idsToDelete);
+      state.sessions = combineSessionsByDay(expandCompositeSessions(state.sessions).filter((item) => !deleteSet.has(item.id)));
       if (state.selectedId === id) {
         state.selectedId = state.sessions[0]?.id || "";
         resetChartRange();
@@ -548,7 +554,193 @@
       if (!session?.id) return;
       merged.set(session.id, session);
     });
-    return Array.from(merged.values()).sort(sortByDateDesc);
+    return combineSessionsByDay(Array.from(merged.values())).sort(sortByDateDesc);
+  }
+
+  function expandCompositeSessions(sessions) {
+    return sessions.flatMap((session) => session.sourceSessions || [session]);
+  }
+
+  function combineSessionsByDay(sessions) {
+    const grouped = new Map();
+    sessions.forEach((session) => {
+      const key = dateKeyFromValue(session.date);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(session);
+    });
+
+    return Array.from(grouped.entries()).flatMap(([dateKey, daySessions]) => {
+      const valid = daySessions.filter((session) => session && !session.isComposite);
+      if (valid.length <= 1) return valid;
+      return [buildDailySession(dateKey, valid)];
+    });
+  }
+
+  function buildDailySession(dateKey, sessions) {
+    const ordered = sessions.slice().sort(sortByTrainingTime);
+    const intervals = [];
+    const points = [];
+    let previousLast = null;
+
+    ordered.forEach((session, index) => {
+      const intervalNumber = index + 1;
+      const source = sourceSessionAsInterval(session, intervalNumber, index);
+      if (previousLast && source.points[0]) {
+        source.interval.gapFromPreviousMeters = gpsDistanceMeters(previousLast, source.points[0]);
+      }
+      previousLast = source.points.at(-1) || previousLast;
+      intervals.push(source.interval);
+      points.push(...source.points);
+    });
+
+    const distance = sum(intervals.map((interval) => interval.distance));
+    const duration = sum(intervals.map((interval) => interval.duration));
+    const strokes = sum(intervals.map((interval) => interval.strokes));
+    const pointValues = points.length ? points : ordered.flatMap((session) => session.points || []);
+    const typeKeys = new Set(ordered.map((session) => trainingTypeKey(session.type)).filter(Boolean));
+    const type = typeKeys.size === 1
+      ? ordered.find((session) => trainingTypeKey(session.type))?.type || ""
+      : typeKeys.size > 1
+        ? "Više tipova"
+        : "";
+
+    return {
+      id: `day-${dateKey}`,
+      title: `${formatTrainingCount(ordered.length)} u danu`,
+      date: dateKey,
+      startTime: ordered[0]?.startTime || "",
+      type,
+      boat: ordered.map((session) => session.boat).filter(Boolean)[0] || "",
+      location: ordered.map((session) => session.location).filter(Boolean)[0] || "",
+      source: ordered.map((session) => session.source).filter(Boolean).join(", "),
+      sourceKind: "Dnevni spojeni trening",
+      publicEntry: ordered.some((session) => session.publicEntry),
+      storedEntry: ordered.some((session) => session.storedEntry),
+      remoteEntry: ordered.some((session) => session.remoteEntry),
+      isComposite: true,
+      sourceSessionIds: ordered.map((session) => session.id),
+      sourceSessions: ordered,
+      points,
+      intervals,
+      summary: {
+        duration,
+        distance,
+        avgPace: distance > 0 && duration > 0 ? duration / (distance / 500) : average(intervals.map((interval) => interval.avgPace)),
+        rate: weightedAverage(intervals.map((interval) => interval.rate), intervals.map((interval) => interval.strokes)),
+        hr: average(pointValues.map((point) => point.hr)),
+        power: average(pointValues.map((point) => point.power)),
+        strokes,
+        distPerStroke: strokes > 0 ? distance / strokes : average(intervals.map((interval) => interval.distPerStroke)),
+        best500: minFinite(ordered.map((session) => session.summary.best500)),
+        best1000: minFinite(ordered.map((session) => session.summary.best1000)),
+        maxRate: maxFinite(ordered.map((session) => session.summary.maxRate)),
+        maxHr: maxFinite(ordered.map((session) => session.summary.maxHr)),
+        pointCount: points.length,
+        hasGps: points.some((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon)),
+      },
+    };
+  }
+
+  function sourceSessionAsInterval(session, intervalNumber, index) {
+    const stitched = stitchSessionPoints(session);
+    const distance = Number.isFinite(session.summary.distance)
+      ? session.summary.distance
+      : maxFinite(stitched.points.map((point) => point.localDistance));
+    const duration = Number.isFinite(session.summary.duration)
+      ? session.summary.duration
+      : maxFinite(stitched.points.map((point) => point.localTime));
+    const points = stitched.points.map((point) => ({
+      ...point,
+      interval: intervalNumber,
+      intervalIndex: index,
+      intervalLabel: sessionTitle(session),
+    }));
+    const strokes = Number.isFinite(session.summary.strokes) ? session.summary.strokes : points.length;
+    return {
+      points,
+      interval: {
+        interval: intervalNumber,
+        index,
+        label: sessionTitle(session),
+        distance,
+        duration,
+        avgPace: Number.isFinite(session.summary.avgPace)
+          ? session.summary.avgPace
+          : distance > 0 && duration > 0
+            ? duration / (distance / 500)
+            : average(points.map((point) => point.pace)),
+        rate: Number.isFinite(session.summary.rate) ? session.summary.rate : average(points.map((point) => point.rate)),
+        hr: Number.isFinite(session.summary.hr) ? session.summary.hr : average(points.map((point) => point.hr)),
+        power: Number.isFinite(session.summary.power) ? session.summary.power : average(points.map((point) => point.power)),
+        strokes,
+        distPerStroke: Number.isFinite(session.summary.distPerStroke)
+          ? session.summary.distPerStroke
+          : strokes > 0 && Number.isFinite(distance)
+            ? distance / strokes
+            : NaN,
+        points,
+        sourceSessionId: session.id,
+      },
+    };
+  }
+
+  function stitchSessionPoints(session) {
+    const intervals = session.intervals?.length ? session.intervals : buildIntervalData(session.points || [], []);
+    let distanceOffset = 0;
+    let timeOffset = 0;
+    const points = [];
+
+    intervals.forEach((interval) => {
+      interval.points.forEach((point) => {
+        const localDistance = Number.isFinite(point.localDistance) ? point.localDistance : point.distance;
+        const localTime = Number.isFinite(point.localTime) ? point.localTime : point.time;
+        points.push({
+          ...point,
+          localDistance: Number.isFinite(localDistance) ? distanceOffset + localDistance : NaN,
+          localTime: Number.isFinite(localTime) ? timeOffset + localTime : NaN,
+        });
+      });
+      const intervalDistance = Number.isFinite(interval.distance)
+        ? interval.distance
+        : maxFinite(interval.points.map((point) => point.localDistance));
+      const intervalDuration = Number.isFinite(interval.duration)
+        ? interval.duration
+        : maxFinite(interval.points.map((point) => point.localTime));
+      if (Number.isFinite(intervalDistance)) distanceOffset += intervalDistance;
+      if (Number.isFinite(intervalDuration)) timeOffset += intervalDuration;
+    });
+
+    return { points };
+  }
+
+  function sortByTrainingTime(a, b) {
+    return parseStartSeconds(a.startTime) - parseStartSeconds(b.startTime) || String(a.id).localeCompare(String(b.id));
+  }
+
+  function parseStartSeconds(value) {
+    const text = String(value || "").trim().toLowerCase().replace(/\s+/g, "");
+    const match = text.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?(am|pm)?$/);
+    if (!match) return Number.MAX_SAFE_INTEGER;
+    let hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    const seconds = Number(match[3] || 0);
+    const suffix = match[4] || "";
+    if (suffix === "pm" && hours < 12) hours += 12;
+    if (suffix === "am" && hours === 12) hours = 0;
+    return hours * 3600 + minutes * 60 + seconds;
+  }
+
+  function weightedAverage(values, weights) {
+    let total = 0;
+    let totalWeight = 0;
+    values.forEach((value, index) => {
+      const weight = Number.isFinite(weights[index]) && weights[index] > 0 ? weights[index] : 0;
+      if (Number.isFinite(value) && weight > 0) {
+        total += value * weight;
+        totalWeight += weight;
+      }
+    });
+    return totalWeight > 0 ? total / totalWeight : average(values);
   }
 
   function selectedUploadType() {
@@ -631,9 +823,12 @@
         } catch (remoteError) {
           console.warn("CSV je spremljen lokalno, ali nije objavljen.", remoteError);
         }
-        state.sessions = [nextSession, ...state.sessions.filter((item) => item.id !== nextSession.id)];
+        const rawSessions = expandCompositeSessions(state.sessions);
+        state.sessions = combineSessionsByDay([nextSession, ...rawSessions.filter((item) => item.id !== nextSession.id)]);
         state.sessions.sort(sortByDateDesc);
-        state.selectedId = nextSession.id;
+        state.selectedId = state.sessions.find((item) =>
+          item.id === nextSession.id || item.sourceSessionIds?.includes(nextSession.id)
+        )?.id || nextSession.id;
         resetChartRange();
         showUploadStatus(
           `CSV učitan i trajno spremljen u ovom browseru: ${session.title} · ${formatDate(session.date)} · ${formatNumber(session.summary.distance, 1)} m · ${formatDurationTenths(session.summary.duration)}`,
@@ -1532,29 +1727,42 @@
     const segments = [];
     const intervals = session.intervals?.length ? session.intervals : buildIntervalData(session.points, []);
     intervals.forEach((interval) => {
-      const points = interval.points.filter((point) => {
+      const allPoints = interval.points
+        .map((point) => ({
+          ...point,
+          segmentDistance: Number.isFinite(point.localDistance) ? point.localDistance : point.distance,
+          segmentTime: Number.isFinite(point.localTime) ? point.localTime : point.time,
+        }))
+        .filter((point) => Number.isFinite(point.segmentDistance));
+      const points = allPoints.filter((point) => {
         const distance = Number.isFinite(point.localDistance) ? point.localDistance : point.distance;
         return Number.isFinite(distance) && Number.isFinite(point.pace) && Number.isFinite(point.rate);
       });
-      if (!points.length) return;
+      const timePoints = allPoints
+        .filter((point) => Number.isFinite(point.segmentTime))
+        .sort((a, b) => a.segmentDistance - b.segmentDistance);
+      if (!points.length && timePoints.length < 2) return;
       const maxDistance = Number.isFinite(interval.distance)
         ? interval.distance
-        : maxFinite(points.map((point) => point.localDistance));
+        : maxFinite(allPoints.map((point) => point.segmentDistance));
       for (let start = 0; start < maxDistance; start += meters) {
         const isLast = start + meters >= maxDistance;
-        const endExclusive = start + meters;
+        const end = isLast ? maxDistance : Math.min(start + meters, maxDistance);
         const slice = points.filter((point) => {
-          const distance = Number.isFinite(point.localDistance) ? point.localDistance : point.distance;
+          const distance = point.segmentDistance;
           return isLast
             ? distance >= start && distance <= maxDistance + 0.001
-            : distance >= start && distance < endExclusive;
+            : distance >= start && distance < end;
         });
-        if (!slice.length) continue;
-        const endLabel = isLast ? Math.round(maxDistance) : start + meters - 1;
-        const avgSplit = average(slice.map((point) => point.pace));
+        if (!slice.length && timePoints.length < 2) continue;
+        const startTime = interpolateSegmentTimeAtDistance(timePoints, start);
+        const endTime = interpolateSegmentTimeAtDistance(timePoints, end);
+        const duration = Number.isFinite(startTime) && Number.isFinite(endTime) ? endTime - startTime : NaN;
+        const segmentDistance = end - start;
+        const measuredSplit = duration > 0 && segmentDistance > 0 ? duration / (segmentDistance / 500) : NaN;
+        const avgSplit = Number.isFinite(measuredSplit) ? measuredSplit : average(slice.map((point) => point.pace));
         const avgSpm = average(slice.map((point) => point.rate));
-        const roundedSplit = Number.isFinite(avgSplit) ? Math.round(avgSplit * 10) / 10 : NaN;
-        const segmentDistance = Math.min(meters, maxDistance - start);
+        const endLabel = isLast ? Math.round(maxDistance) : Math.round(end);
         segments.push({
           interval: interval.interval,
           intervalLabel: interval.label,
@@ -1566,9 +1774,7 @@
           rate: avgSpm,
           hr: average(slice.map((point) => point.hr)),
           power: average(slice.map((point) => point.power)),
-          duration: Number.isFinite(roundedSplit)
-            ? Math.round(roundedSplit * (segmentDistance / 500) * 10) / 10
-            : NaN,
+          duration: Number.isFinite(duration) ? Math.round(duration * 10) / 10 : NaN,
         });
       }
     });
@@ -1581,6 +1787,32 @@
       isBest: Number.isFinite(segment.pace) && segment.pace === best,
       isWorst: Number.isFinite(segment.pace) && segment.pace === worst,
     }));
+  }
+
+  function interpolateSegmentTimeAtDistance(points, targetDistance) {
+    if (!points.length || !Number.isFinite(targetDistance)) return NaN;
+    if (targetDistance <= 0) return 0;
+
+    const first = points[0];
+    if (targetDistance <= first.segmentDistance) {
+      if (first.segmentDistance <= 0) return first.segmentTime;
+      return (targetDistance / first.segmentDistance) * first.segmentTime;
+    }
+
+    for (let index = 1; index < points.length; index += 1) {
+      const previous = points[index - 1];
+      const current = points[index];
+      if (previous.segmentDistance <= targetDistance && current.segmentDistance >= targetDistance) {
+        const span = current.segmentDistance - previous.segmentDistance;
+        if (span <= 0) return current.segmentTime;
+        const ratio = (targetDistance - previous.segmentDistance) / span;
+        return previous.segmentTime + ratio * (current.segmentTime - previous.segmentTime);
+      }
+    }
+
+    const last = points.at(-1);
+    if (Math.abs(targetDistance - last.segmentDistance) <= 2) return last.segmentTime;
+    return NaN;
   }
 
   function segmentPhase(segment, index, count, best, worst) {
