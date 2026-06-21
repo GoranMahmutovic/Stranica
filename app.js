@@ -702,6 +702,23 @@
     if (!state.uploadKey) {
       throw new Error("Nema admin ključa za brisanje.");
     }
+    const payload = await requestSessionDelete(id);
+    if (payload.ok) return payload;
+
+    if (payload.status === 405 || /invalid session payload/i.test(payload.error || "")) {
+      const deletePayload = await requestSessionDeleteViaMethod(id);
+      if (deletePayload.ok) return deletePayload;
+    }
+
+    if (/invalid session payload/i.test(payload.error || "")) {
+      const legacyPayload = await requestLegacyDeleteFallback(id);
+      if (legacyPayload.ok) return legacyPayload;
+    }
+
+    throw new Error(payload.error || `Brisanje nije uspjelo (${payload.status || "nepoznato"}).`);
+  }
+
+  async function requestSessionDelete(id) {
     const response = await fetch(REMOTE_SESSIONS_URL, {
       method: "POST",
       headers: {
@@ -714,10 +731,40 @@
       }),
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload.error || `Brisanje nije uspjelo (${response.status}).`);
-    }
-    return payload;
+    return { ...payload, ok: response.ok && payload.ok !== false, status: response.status };
+  }
+
+  async function requestSessionDeleteViaMethod(id) {
+    const response = await fetch(`${REMOTE_SESSIONS_URL}?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: {
+        "x-upload-key": state.uploadKey,
+      },
+    });
+    const payload = await response.json().catch(() => ({}));
+    return { ...payload, ok: response.ok && payload.ok !== false, status: response.status };
+  }
+
+  async function requestLegacyDeleteFallback(id) {
+    const response = await fetch(REMOTE_SESSIONS_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-upload-key": state.uploadKey,
+      },
+      body: JSON.stringify({
+        id,
+        csvText: "",
+        meta: {
+          id,
+          title: "Obrisan trening",
+          type: "deleted",
+          deleted: true,
+        },
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    return { ...payload, ok: response.ok, status: response.status, legacy: true };
   }
 
   function buildSession(csvText, meta) {

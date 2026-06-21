@@ -15,7 +15,7 @@ export default async (request) => {
 
   if (request.method === "POST") {
     const payload = await request.json().catch(() => null);
-    if (payload?.action === "delete") {
+    if (isDeletePayload(payload)) {
       return deleteSession(request, payload);
     }
     return saveSession(request, payload);
@@ -27,6 +27,14 @@ export default async (request) => {
 
   return jsonResponse({ error: "Method not allowed" }, 405);
 };
+
+function isDeletePayload(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  const action = String(payload.action || payload.intent || payload.type || "").trim().toLowerCase();
+  if (["delete", "remove", "brisanje", "obrisi", "obriši"].includes(action)) return true;
+  if (payload.delete === true || payload.deleted === true) return true;
+  return typeof payload.id === "string" && typeof payload.csvText !== "string";
+}
 
 async function listSessions() {
   const store = getStore(STORE_NAME);
@@ -117,7 +125,7 @@ async function deleteSession(request, payload = null) {
   let id = safeId(url.searchParams.get("id"));
   if (!id) {
     const body = payload || (await request.json().catch(() => null));
-    id = safeId(body?.id);
+    id = safeId(body?.id || body?.sessionId || body?.deleteSessionId);
   }
   if (!id) {
     return jsonResponse({ error: "Invalid session id" }, 400);
