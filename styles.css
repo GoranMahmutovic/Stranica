@@ -830,6 +830,14 @@ button.calendar-day:hover {
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.34));
 }
 
+.map-route-heat {
+  fill: none;
+  stroke-width: 3.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
+}
+
 .map-route-point {
   fill: var(--green);
   stroke: #ffffff;
@@ -888,6 +896,86 @@ button.calendar-day:hover {
 
 .map-link:hover {
   text-decoration: underline;
+}
+
+.heatmap-legend {
+  display: grid;
+  grid-template-columns: auto minmax(110px, 190px) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.heatmap-legend i {
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--red), var(--yellow), var(--green));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.interval-maps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.interval-map-card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 9px;
+}
+
+.interval-map-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 8px;
+  font-family: var(--mono);
+}
+
+.interval-map-heading strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.interval-map-heading span {
+  color: var(--muted2);
+  font-size: 10px;
+  text-align: right;
+}
+
+.mini-map-wrap {
+  position: relative;
+  min-height: 184px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  background: #d5dce5;
+  isolation: isolate;
+}
+
+.mini-map-wrap svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  pointer-events: none;
+}
+
+.mini-map-wrap .map-route-halo {
+  stroke-width: 5;
+}
+
+.mini-map-wrap .map-route-heat {
+  stroke-width: 3.2;
+}
+
+.mini-map-wrap .map-route-point {
+  stroke-width: 1.6;
 }
 
 .map-legend {
@@ -1084,6 +1172,33 @@ td {
   font-size: 12px;
 }
 
+.admin-only {
+  display: none;
+}
+
+body.admin-mode th.admin-only,
+body.admin-mode td.admin-only {
+  display: table-cell;
+}
+
+.delete-session-button {
+  min-height: 30px;
+  border-color: rgba(255, 79, 79, 0.55);
+  background: rgba(255, 79, 79, 0.12);
+  color: #ffd8d8;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.delete-session-button:hover {
+  background: rgba(255, 79, 79, 0.2);
+}
+
+.delete-session-button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
 tbody tr:hover {
   background: rgba(59, 125, 255, 0.05);
 }
@@ -1213,6 +1328,14 @@ tbody tr:last-child td {
   }
 
   .interval-chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .interval-maps {
+    grid-template-columns: 1fr;
+  }
+
+  .heatmap-legend {
     grid-template-columns: 1fr;
   }
 

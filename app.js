@@ -60,6 +60,7 @@
     mapTiles: document.getElementById("mapTiles"),
     routeOverlay: document.getElementById("routeOverlay"),
     mapLabels: document.getElementById("mapLabels"),
+    intervalMaps: document.getElementById("intervalMaps"),
     sessionLegend: document.getElementById("sessionLegend"),
     routeStats: document.getElementById("routeStats"),
     sessionTable: document.getElementById("sessionTable"),
@@ -138,7 +139,7 @@
       state.segmentMeters = Number(event.target.value) || 500;
       render();
     });
-    elements.sessionTable.addEventListener("click", handleSessionTableActivate);
+    elements.sessionTable.addEventListener("click", handleSessionTableClick);
     elements.sessionTable.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         handleSessionTableActivate(event);
@@ -154,6 +155,7 @@
   }
 
   function handleSessionTableActivate(event) {
+    if (event.target.closest("button, a, input, select")) return;
     const row = event.target.closest("tr[data-session-id]");
     if (!row) return;
     if (event.type === "keydown") event.preventDefault();
@@ -161,6 +163,41 @@
     syncCalendarMonthToSelected();
     render();
     elements.sessionSelect.value = state.selectedId;
+  }
+
+  async function handleDeleteSession(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!state.isAdmin) {
+      showUploadStatus("Brisanje je dostupno samo preko admin linka.", true);
+      return;
+    }
+    const button = event.target.closest("[data-delete-session-id]");
+    const id = button?.dataset.deleteSessionId || "";
+    const session = state.sessions.find((item) => item.id === id);
+    if (!session) return;
+    const confirmed = window.confirm(
+      `Obrisati trening "${sessionTitle(session)}"?\n\nAko je trening javno objavljen, bit ce uklonjen i s javne stranice.`,
+    );
+    if (!confirmed) return;
+
+    button.disabled = true;
+    showUploadStatus(`Brišem trening: ${sessionTitle(session)}...`);
+    try {
+      await deleteRemoteSession(id);
+      deleteStoredSession(id);
+      state.sessions = state.sessions.filter((item) => item.id !== id);
+      if (state.selectedId === id) {
+        state.selectedId = state.sessions[0]?.id || "";
+      }
+      syncCalendarMonthToSelected();
+      render();
+      showUploadStatus(`Trening je obrisan: ${sessionTitle(session)}`);
+    } catch (error) {
+      console.error(error);
+      showUploadStatus(`Ne mogu obrisati trening: ${error.message}`, true);
+      button.disabled = false;
+    }
   }
 
   function handleHistoryCalendarActivate(event) {
@@ -279,12 +316,21 @@
   }
 
   function applyAccessMode() {
+    document.body.classList.toggle("admin-mode", state.isAdmin);
     if (elements.uploadAction) {
       elements.uploadAction.hidden = !state.isAdmin;
     }
     if (elements.csvUpload) {
       elements.csvUpload.disabled = !state.isAdmin;
     }
+  }
+
+  function handleSessionTableClick(event) {
+    if (event.target.closest("[data-delete-session-id]")) {
+      handleDeleteSession(event);
+      return;
+    }
+    handleSessionTableActivate(event);
   }
 
   function replaceQueryParams(params) {
@@ -334,9 +380,14 @@
     } catch (error) {
       console.info("Nema javnog manifesta treninga.", error);
     }
-    const remoteSessions = await loadRemoteSessions();
+    const remoteData = await loadRemoteSessions();
+    const remoteSessions = remoteData.sessions || [];
+    const deletedIds = new Set(remoteData.deletedIds || []);
     const localSessions = state.isAdmin ? loadStoredSessions() : [];
-    state.sessions = mergeSessions([...publicSessions, ...remoteSessions], localSessions);
+    state.sessions = mergeSessions(
+      [...publicSessions.filter((session) => !deletedIds.has(session.id)), ...remoteSessions],
+      localSessions.filter((session) => !deletedIds.has(session.id)),
+    );
     state.selectedId = state.sessions[0]?.id || "";
     syncCalendarMonthToSelected();
     render();
@@ -345,13 +396,13 @@
   async function loadRemoteSessions() {
     try {
       const response = await fetch(REMOTE_SESSIONS_URL, { cache: "no-store" });
-      if (response.status === 404) return [];
+      if (response.status === 404) return { sessions: [], deletedIds: [] };
       if (!response.ok) {
         throw new Error(`Javni API nije dostupan (${response.status})`);
       }
       const payload = await response.json();
       const entries = Array.isArray(payload.sessions) ? payload.sessions : [];
-      return entries
+      const sessions = entries
         .map((entry) => {
           try {
             if (!entry?.csvText || !entry?.id) return null;
@@ -371,9 +422,11 @@
         })
         .filter(Boolean)
         .sort(sortByDateDesc);
+      const deletedIds = Array.isArray(payload.deletedIds) ? payload.deletedIds.map((id) => String(id)) : [];
+      return { sessions, deletedIds };
     } catch (error) {
       console.info("Nema javno spremljenih treninga iz API-ja.", error);
-      return [];
+      return { sessions: [], deletedIds: [] };
     }
   }
 
@@ -428,6 +481,15 @@
       localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(entries));
     } catch (error) {
       throw new Error("CSV je analiziran, ali ga browser nije mogao trajno spremiti. Storage je vjerojatno pun ili blokiran.");
+    }
+  }
+
+  function deleteStoredSession(id) {
+    try {
+      const entries = readStoredEntries().filter((entry) => entry.id !== id);
+      localStorage.setItem(LOCAL_SESSIONS_KEY, JSON.stringify(entries));
+    } catch (error) {
+      console.warn("Lokalna kopija treninga nije obrisana.", error);
     }
   }
 
@@ -566,6 +628,23 @@
       remoteEntry: true,
       uploadedAt: payload.session?.savedAt || entry.meta.uploadedAt || "",
     });
+  }
+
+  async function deleteRemoteSession(id) {
+    if (!state.uploadKey) {
+      throw new Error("Nema admin ključa za brisanje.");
+    }
+    const response = await fetch(`${REMOTE_SESSIONS_URL}?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: {
+        "x-upload-key": state.uploadKey,
+      },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || `Brisanje nije uspjelo (${response.status}).`);
+    }
+    return payload;
   }
 
   function buildSession(csvText, meta) {
@@ -1420,7 +1499,7 @@
 
   function renderResponsiveVisuals() {
     renderCharts();
-    renderStaticMapPanel(getSelectedSession());
+    renderHeatmapMapPanel(getSelectedSession());
   }
 
   function filteredSessions() {
@@ -1529,7 +1608,7 @@
       .filter(Boolean)
       .map((value) => `<div>${escapeHtml(value)}</div>`)
       .join("");
-    renderStaticMapPanel(session);
+    renderHeatmapMapPanel(session);
   }
 
   function renderIntervalOverview(session) {
@@ -1668,6 +1747,290 @@
       .join("");
   }
 
+  function renderHeatmapMapPanel(session) {
+    if (!session) {
+      clearRouteMap(elements.mapTiles, elements.routeOverlay, elements.mapLabels);
+      if (elements.intervalMaps) {
+        elements.intervalMaps.hidden = true;
+        elements.intervalMaps.innerHTML = "";
+      }
+      elements.routeStats.innerHTML = "";
+      return;
+    }
+
+    const routeGroups = groupPointsByInterval(session.points)
+      .map((group) => group.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon)))
+      .filter((group) => group.length >= 2);
+    const route = routeGroups.flat();
+
+    if (route.length < 2) {
+      clearRouteMap(elements.mapTiles, elements.routeOverlay, elements.mapLabels);
+      if (elements.intervalMaps) {
+        elements.intervalMaps.hidden = true;
+        elements.intervalMaps.innerHTML = "";
+      }
+      elements.routeStats.innerHTML = "<div>GPS koordinate nisu dostupne u ovom CSV-u.</div>";
+      return;
+    }
+
+    const speedScale = makeRouteSpeedScale(routeGroups);
+    const mapView = renderRouteMap(elements.mapTiles, elements.routeOverlay, elements.mapLabels, routeGroups, speedScale, {
+      showEndpointLabels: true,
+      showIntervalLabels: true,
+    });
+    const centerLat = average(route.map((point) => point.lat));
+    const centerLon = average(route.map((point) => point.lon));
+    const first = route[0];
+    const last = route[route.length - 1];
+    const osmUrl = `https://www.openstreetmap.org/?mlat=${centerLat.toFixed(7)}&mlon=${centerLon.toFixed(7)}#map=${mapView.zoom}/${centerLat.toFixed(7)}/${centerLon.toFixed(7)}`;
+
+    elements.routeStats.innerHTML = [
+      `GPS točaka: ${route.length}`,
+      routeGroups.length > 1 ? `GPS dionica: ${routeGroups.length}` : "",
+      heatmapLegendHtml(speedScale),
+      `Zoom karte: ${mapView.zoom}`,
+      `Start: ${formatNumber(first.lat, 5)}, ${formatNumber(first.lon, 5)}`,
+      `Cilj: ${formatNumber(last.lat, 5)}, ${formatNumber(last.lon, 5)}`,
+      `<a class="map-link" href="${osmUrl}" target="_blank" rel="noreferrer">Otvori na OpenStreetMap</a>`,
+    ]
+      .filter(Boolean)
+      .map((value) => `<div>${value}</div>`)
+      .join("");
+
+    renderIntervalRouteMaps(session, routeGroups, speedScale);
+  }
+
+  function clearRouteMap(tilesEl, overlayEl, labelsEl) {
+    if (tilesEl) tilesEl.innerHTML = "";
+    if (overlayEl) {
+      overlayEl.innerHTML = "";
+      overlayEl.setAttribute("viewBox", "0 0 100 100");
+    }
+    if (labelsEl) labelsEl.innerHTML = "";
+  }
+
+  function renderRouteMap(tilesEl, overlayEl, labelsEl, routeGroups, speedScale, options = {}) {
+    const route = routeGroups.flat();
+    const mapView = buildStaticMapView(route, tilesEl);
+    const project = (point) => mapView.project(point);
+    const markerRadius = options.small ? 4.8 : 7;
+    const labels = [];
+
+    renderMapTiles(tilesEl, mapView);
+    overlayEl.setAttribute("viewBox", `0 0 ${mapView.width} ${mapView.height}`);
+    overlayEl.setAttribute("preserveAspectRatio", "none");
+
+    const halos = routeGroups
+      .map((group) => `<path class="map-route-halo" d="${routePath(group, project)}"></path>`)
+      .join("");
+    const heatSegments = routeGroups.map((group) => routeHeatSegments(group, project, speedScale)).join("");
+    const first = route[0];
+    const last = route[route.length - 1];
+    const start = project(first);
+    const finish = project(last);
+
+    overlayEl.innerHTML = `
+      ${halos}
+      ${heatSegments}
+      <circle class="map-route-point" cx="${start.x.toFixed(3)}" cy="${start.y.toFixed(3)}" r="${markerRadius}"></circle>
+      <circle class="map-route-point finish" cx="${finish.x.toFixed(3)}" cy="${finish.y.toFixed(3)}" r="${markerRadius}"></circle>
+    `;
+
+    if (labelsEl) {
+      if (options.showIntervalLabels && routeGroups.length > 1) {
+        routeGroups.forEach((group, index) => {
+          const point = group[Math.floor(group.length / 2)];
+          const position = offsetMapLabel(project(point), index);
+          const interval = Number.isFinite(point.interval) ? point.interval : index + 1;
+          labels.push(mapLabelHtml(`I${interval}`, position, "interval", COLORS.text));
+        });
+      }
+      if (options.showEndpointLabels) {
+        labels.push(mapLabelHtml("START", start, "start", COLORS.green));
+        labels.push(mapLabelHtml("KRAJ", finish, "finish", COLORS.hr));
+      }
+      labelsEl.innerHTML = labels.join("");
+    }
+
+    return mapView;
+  }
+
+  function offsetMapLabel(position, index) {
+    const offsets = [
+      { x: 0, y: -5 },
+      { x: 5, y: 0 },
+      { x: 0, y: 5 },
+      { x: -5, y: 0 },
+      { x: 4, y: -4 },
+      { x: 4, y: 4 },
+      { x: -4, y: 4 },
+      { x: -4, y: -4 },
+    ];
+    const offset = offsets[index % offsets.length];
+    return {
+      ...position,
+      xPercent: position.xPercent + offset.x,
+      yPercent: position.yPercent + offset.y,
+    };
+  }
+
+  function renderMapTiles(tilesEl, mapView) {
+    const { zoom, topLeftX, topLeftY, tileMinX, tileMaxX, tileMinY, tileMaxY } = mapView;
+    const tileLimit = 2 ** zoom;
+    tilesEl.innerHTML = "";
+
+    for (let tileY = tileMinY; tileY <= tileMaxY; tileY += 1) {
+      if (tileY < 0 || tileY >= tileLimit) continue;
+      for (let tileX = tileMinX; tileX <= tileMaxX; tileX += 1) {
+        const wrappedX = ((tileX % tileLimit) + tileLimit) % tileLimit;
+        const img = document.createElement("img");
+        img.className = "map-tile";
+        img.alt = "";
+        img.loading = "lazy";
+        img.decoding = "async";
+        img.src = `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${tileY}.png`;
+        img.style.left = `${Math.round(tileX * 256 - topLeftX)}px`;
+        img.style.top = `${Math.round(tileY * 256 - topLeftY)}px`;
+        tilesEl.append(img);
+      }
+    }
+  }
+
+  function routePath(group, project) {
+    return group
+      .map((point, index) => {
+        const projected = project(point);
+        return `${index === 0 ? "M" : "L"} ${projected.x.toFixed(3)} ${projected.y.toFixed(3)}`;
+      })
+      .join(" ");
+  }
+
+  function routeHeatSegments(group, project, speedScale) {
+    const segments = [];
+    for (let index = 1; index < group.length; index += 1) {
+      const previous = group[index - 1];
+      const point = group[index];
+      const from = project(previous);
+      const to = project(point);
+      segments.push(`
+        <path
+          class="map-route-heat"
+          d="M ${from.x.toFixed(3)} ${from.y.toFixed(3)} L ${to.x.toFixed(3)} ${to.y.toFixed(3)}"
+          style="stroke:${heatmapColor(routeSegmentSpeed(previous, point), speedScale)}"
+        ></path>
+      `);
+    }
+    return segments.join("");
+  }
+
+  function renderIntervalRouteMaps(session, routeGroups, speedScale) {
+    if (!elements.intervalMaps) return;
+    if (routeGroups.length <= 1) {
+      elements.intervalMaps.hidden = true;
+      elements.intervalMaps.innerHTML = "";
+      return;
+    }
+
+    elements.intervalMaps.hidden = false;
+    elements.intervalMaps.innerHTML = routeGroups
+      .map((group, index) => {
+        const intervalNumber = Number.isFinite(group[0].interval) ? group[0].interval : index + 1;
+        const summary = (session.intervals || []).find((item) => item.interval === intervalNumber) || null;
+        const title = summary?.label || `Interval ${intervalNumber}`;
+        const meta = summary
+          ? `${formatMetersCompact(summary.distance)} - ${formatDurationTenths(summary.duration)} - ${formatSplitOnly(summary.avgPace)} /500`
+          : `${group.length} GPS točaka`;
+        return `
+          <article class="interval-map-card" data-interval-map-index="${index}">
+            <div class="interval-map-heading">
+              <strong>${escapeHtml(title)}</strong>
+              <span>${escapeHtml(meta)}</span>
+            </div>
+            <div class="mini-map-wrap">
+              <div class="map-tiles"></div>
+              <svg aria-label="GPS heatmap intervala ${escapeHtml(String(intervalNumber))}"></svg>
+              <div class="map-labels"></div>
+            </div>
+          </article>
+        `;
+      })
+      .join("");
+
+    elements.intervalMaps.querySelectorAll(".interval-map-card").forEach((card, index) => {
+      renderRouteMap(
+        card.querySelector(".map-tiles"),
+        card.querySelector("svg"),
+        card.querySelector(".map-labels"),
+        [routeGroups[index]],
+        speedScale,
+        { small: true },
+      );
+    });
+  }
+
+  function makeRouteSpeedScale(routeGroups) {
+    const speeds = [];
+    routeGroups.forEach((group) => {
+      for (let index = 1; index < group.length; index += 1) {
+        const speed = routeSegmentSpeed(group[index - 1], group[index]);
+        if (Number.isFinite(speed) && speed > 0.2 && speed < 12) speeds.push(speed);
+      }
+    });
+
+    const min = minFinite(speeds);
+    const max = maxFinite(speeds);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 1.5, max: 5 };
+    if (Math.abs(max - min) < 0.05) return { min: min - 0.2, max: max + 0.2 };
+    return { min, max };
+  }
+
+  function routeSegmentSpeed(previous, point) {
+    const fromPoint = pointSpeed(previous);
+    const toPoint = pointSpeed(point);
+    if (Number.isFinite(fromPoint) && Number.isFinite(toPoint)) return (fromPoint + toPoint) / 2;
+    if (Number.isFinite(fromPoint)) return fromPoint;
+    if (Number.isFinite(toPoint)) return toPoint;
+
+    const deltaTime = point.time - previous.time;
+    if (!Number.isFinite(deltaTime) || deltaTime <= 0) return NaN;
+    const gpsDistance = gpsDistanceMeters(previous, point);
+    const measuredDistance =
+      Number.isFinite(gpsDistance) && gpsDistance > 0
+        ? gpsDistance
+        : Math.abs((point.distance || 0) - (previous.distance || 0));
+    return Number.isFinite(measuredDistance) && measuredDistance > 0 ? measuredDistance / deltaTime : NaN;
+  }
+
+  function pointSpeed(point) {
+    if (Number.isFinite(point.speed) && point.speed > 0) return point.speed;
+    if (Number.isFinite(point.pace) && point.pace > 0) return 500 / point.pace;
+    return NaN;
+  }
+
+  function heatmapColor(speed, speedScale) {
+    if (!Number.isFinite(speed)) return "rgb(246, 200, 95)";
+    const ratio = Math.max(0, Math.min(1, (speed - speedScale.min) / Math.max(0.001, speedScale.max - speedScale.min)));
+    if (ratio < 0.5) return mixColor([255, 79, 79], [246, 200, 95], ratio * 2);
+    return mixColor([246, 200, 95], [34, 216, 110], (ratio - 0.5) * 2);
+  }
+
+  function mixColor(from, to, ratio) {
+    const color = from.map((value, index) => Math.round(value + (to[index] - value) * ratio));
+    return `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+  }
+
+  function heatmapLegendHtml(speedScale) {
+    const slow = Number.isFinite(speedScale.min) && speedScale.min > 0 ? formatSplitOnly(500 / speedScale.min) : "--";
+    const fast = Number.isFinite(speedScale.max) && speedScale.max > 0 ? formatSplitOnly(500 / speedScale.max) : "--";
+    return `
+      <div class="heatmap-legend" aria-label="Legenda brzine">
+        <span>Sporije ${slow}</span>
+        <i aria-hidden="true"></i>
+        <span>Brže ${fast}</span>
+      </div>
+    `;
+  }
+
   function mapLabelHtml(text, position, type, color) {
     const rawX = Number.isFinite(position.xPercent) ? position.xPercent : position.x;
     const rawY = Number.isFinite(position.yPercent) ? position.yPercent : position.y;
@@ -1693,10 +2056,11 @@
     };
   }
 
-  function buildStaticMapView(route) {
-    const rect = elements.mapTiles?.getBoundingClientRect?.() || {};
-    const width = Math.max(320, Math.round(rect.width || elements.mapTiles?.clientWidth || 420));
-    const height = Math.max(300, Math.round(rect.height || elements.mapTiles?.clientHeight || 340));
+  function buildStaticMapView(route, container = elements.mapTiles) {
+    const isMini = Boolean(container?.closest?.(".mini-map-wrap"));
+    const rect = container?.getBoundingClientRect?.() || {};
+    const width = Math.max(isMini ? 220 : 320, Math.round(rect.width || container?.clientWidth || (isMini ? 260 : 420)));
+    const height = Math.max(isMini ? 160 : 300, Math.round(rect.height || container?.clientHeight || (isMini ? 180 : 340)));
     const padding = Math.max(22, Math.min(width, height) * 0.06);
     let zoom = 12;
     let pixels = [];
@@ -1829,6 +2193,11 @@
             <td>${formatDuration(session.summary.duration)}</td>
             <td>${formatPace(session.summary.avgPace)}</td>
             <td>${formatNumber(session.summary.rate, 1)}</td>
+            <td class="admin-only">
+              <button class="delete-session-button" type="button" data-delete-session-id="${escapeHtml(session.id)}" aria-label="Obriši trening ${escapeHtml(session.title)}">
+                Obriši
+              </button>
+            </td>
           </tr>
         `,
       )
