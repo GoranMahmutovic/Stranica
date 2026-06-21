@@ -1773,8 +1773,8 @@
       return;
     }
 
-    const speedScale = makeRouteSpeedScale(routeGroups);
-    const mapView = renderRouteMap(elements.mapTiles, elements.routeOverlay, elements.mapLabels, routeGroups, speedScale, {
+    const speedScales = makeRouteSpeedScales(routeGroups);
+    const mapView = renderRouteMap(elements.mapTiles, elements.routeOverlay, elements.mapLabels, routeGroups, speedScales, {
       showEndpointLabels: true,
       showIntervalLabels: true,
     });
@@ -1787,7 +1787,9 @@
     elements.routeStats.innerHTML = [
       `GPS točaka: ${route.length}`,
       routeGroups.length > 1 ? `GPS dionica: ${routeGroups.length}` : "",
-      heatmapLegendHtml(speedScale),
+      heatmapLegendHtml(routeGroups.length > 1 ? null : speedScales[0], {
+        note: routeGroups.length > 1 ? "skala po intervalu" : "",
+      }),
       `Zoom karte: ${mapView.zoom}`,
       `Start: ${formatNumber(first.lat, 5)}, ${formatNumber(first.lon, 5)}`,
       `Cilj: ${formatNumber(last.lat, 5)}, ${formatNumber(last.lon, 5)}`,
@@ -1797,7 +1799,7 @@
       .map((value) => `<div>${value}</div>`)
       .join("");
 
-    renderIntervalRouteMaps(session, routeGroups, speedScale);
+    renderIntervalRouteMaps(session, routeGroups, speedScales);
   }
 
   function clearRouteMap(tilesEl, overlayEl, labelsEl) {
@@ -1809,8 +1811,9 @@
     if (labelsEl) labelsEl.innerHTML = "";
   }
 
-  function renderRouteMap(tilesEl, overlayEl, labelsEl, routeGroups, speedScale, options = {}) {
+  function renderRouteMap(tilesEl, overlayEl, labelsEl, routeGroups, speedScales, options = {}) {
     const route = routeGroups.flat();
+    const groupScales = Array.isArray(speedScales) ? speedScales : routeGroups.map(() => speedScales);
     const mapView = buildStaticMapView(route, tilesEl);
     const project = (point) => mapView.project(point);
     const markerRadius = options.small ? 4.8 : 7;
@@ -1823,7 +1826,9 @@
     const halos = routeGroups
       .map((group) => `<path class="map-route-halo" d="${routePath(group, project)}"></path>`)
       .join("");
-    const heatSegments = routeGroups.map((group) => routeHeatSegments(group, project, speedScale)).join("");
+    const heatSegments = routeGroups
+      .map((group, index) => routeHeatSegments(group, project, groupScales[index] || groupScales[0]))
+      .join("");
     const first = route[0];
     const last = route[route.length - 1];
     const start = project(first);
@@ -1923,7 +1928,7 @@
     return segments.join("");
   }
 
-  function renderIntervalRouteMaps(session, routeGroups, speedScale) {
+  function renderIntervalRouteMaps(session, routeGroups, speedScales) {
     if (!elements.intervalMaps) return;
     if (routeGroups.length <= 1) {
       elements.intervalMaps.hidden = true;
@@ -1951,6 +1956,7 @@
               <svg aria-label="GPS heatmap intervala ${escapeHtml(String(intervalNumber))}"></svg>
               <div class="map-labels"></div>
             </div>
+            ${heatmapLegendHtml(speedScales[index], { compact: true })}
           </article>
         `;
       })
@@ -1962,26 +1968,96 @@
         card.querySelector("svg"),
         card.querySelector(".map-labels"),
         [routeGroups[index]],
-        speedScale,
+        [speedScales[index]],
         { small: true },
       );
     });
   }
 
-  function makeRouteSpeedScale(routeGroups) {
-    const speeds = [];
-    routeGroups.forEach((group) => {
-      for (let index = 1; index < group.length; index += 1) {
-        const speed = routeSegmentSpeed(group[index - 1], group[index]);
-        if (Number.isFinite(speed) && speed > 0.2 && speed < 12) speeds.push(speed);
-      }
-    });
+  function makeRouteSpeedScales(routeGroups) {
+    return routeGroups.map((group) => makeGroupSpeedScale(group));
+  }
 
-    const min = minFinite(speeds);
-    const max = maxFinite(speeds);
+  function makeGroupSpeedScale(group) {
+    const segments = collectRouteSpeedSegments(group);
+    const scaleSegments = trimStartForHeatmapScale(group, segments);
+    let speeds = scaleSegments.map((segment) => segment.speed);
+    if (speeds.length < Math.max(8, Math.floor(segments.length * 0.35))) {
+      speeds = segments.map((segment) => segment.speed);
+    }
+
+    const min = percentile(speeds, 0.14);
+    const max = percentile(speeds, 0.92);
     if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 1.5, max: 5 };
     if (Math.abs(max - min) < 0.05) return { min: min - 0.2, max: max + 0.2 };
-    return { min, max };
+    return {
+      min,
+      max,
+      sampleCount: speeds.length,
+      clippedStart: speeds.length < segments.length,
+    };
+  }
+
+  function collectRouteSpeedSegments(group) {
+    const distanceMin = minFinite(group.map((point) => point.distance));
+    const distanceMax = maxFinite(group.map((point) => point.distance));
+    const timeMin = minFinite(group.map((point) => point.time));
+    const timeMax = maxFinite(group.map((point) => point.time));
+
+    return group
+      .slice(1)
+      .map((point, index) => {
+        const previous = group[index];
+        const speed = routeSegmentSpeed(previous, point);
+        const midpointDistance =
+          Number.isFinite(previous.distance) && Number.isFinite(point.distance)
+            ? (previous.distance + point.distance) / 2
+            : NaN;
+        const midpointTime =
+          Number.isFinite(previous.time) && Number.isFinite(point.time)
+            ? (previous.time + point.time) / 2
+            : NaN;
+        return {
+          speed,
+          index: index + 1,
+          progressMeters: Number.isFinite(midpointDistance) ? midpointDistance - distanceMin : NaN,
+          progressSeconds: Number.isFinite(midpointTime) ? midpointTime - timeMin : NaN,
+          progressRatio: group.length > 1 ? (index + 1) / (group.length - 1) : 0,
+          distanceSpan: distanceMax - distanceMin,
+          timeSpan: timeMax - timeMin,
+        };
+      })
+      .filter((segment) => Number.isFinite(segment.speed) && segment.speed > 0.2 && segment.speed < 12);
+  }
+
+  function trimStartForHeatmapScale(group, segments) {
+    if (!segments.length) return [];
+    const distanceSpan = segments[0].distanceSpan;
+    const timeSpan = segments[0].timeSpan;
+    const startIgnoreMeters = Number.isFinite(distanceSpan) && distanceSpan >= 300
+      ? Math.min(120, Math.max(35, distanceSpan * 0.045))
+      : NaN;
+    const startIgnoreSeconds = Number.isFinite(timeSpan) && timeSpan >= 90
+      ? Math.min(22, Math.max(8, timeSpan * 0.035))
+      : NaN;
+    const fallbackRatio = group.length >= 30 ? 0.06 : 0;
+
+    return segments.filter((segment) => {
+      if (Number.isFinite(startIgnoreMeters)) return segment.progressMeters >= startIgnoreMeters;
+      if (Number.isFinite(startIgnoreSeconds)) return segment.progressSeconds >= startIgnoreSeconds;
+      return segment.progressRatio >= fallbackRatio;
+    });
+  }
+
+  function percentile(values, amount) {
+    const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+    if (!sorted.length) return NaN;
+    if (sorted.length === 1) return sorted[0];
+    const position = Math.max(0, Math.min(sorted.length - 1, (sorted.length - 1) * amount));
+    const lower = Math.floor(position);
+    const upper = Math.ceil(position);
+    const weight = position - lower;
+    return sorted[lower] + (sorted[upper] - sorted[lower]) * weight;
   }
 
   function routeSegmentSpeed(previous, point) {
@@ -2019,14 +2095,17 @@
     return `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
   }
 
-  function heatmapLegendHtml(speedScale) {
-    const slow = Number.isFinite(speedScale.min) && speedScale.min > 0 ? formatSplitOnly(500 / speedScale.min) : "--";
-    const fast = Number.isFinite(speedScale.max) && speedScale.max > 0 ? formatSplitOnly(500 / speedScale.max) : "--";
+  function heatmapLegendHtml(speedScale, options = {}) {
+    const slow = Number.isFinite(speedScale?.min) && speedScale.min > 0 ? formatSplitOnly(500 / speedScale.min) : "Sporije";
+    const fast = Number.isFinite(speedScale?.max) && speedScale.max > 0 ? formatSplitOnly(500 / speedScale.max) : "Brže";
+    const note = options.note ? `<em>${escapeHtml(options.note)}</em>` : "";
+    const classes = ["heatmap-legend", options.compact ? "compact" : ""].filter(Boolean).join(" ");
     return `
-      <div class="heatmap-legend" aria-label="Legenda brzine">
-        <span>Sporije ${slow}</span>
+      <div class="${classes}" aria-label="Legenda brzine">
+        <span>${Number.isFinite(speedScale?.min) ? `Sporije ${slow}` : slow}</span>
         <i aria-hidden="true"></i>
-        <span>Brže ${fast}</span>
+        <span>${Number.isFinite(speedScale?.max) ? `Brže ${fast}` : fast}</span>
+        ${note}
       </div>
     `;
   }

@@ -912,6 +912,25 @@ button.calendar-day:hover {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
 
+.heatmap-legend em {
+  grid-column: 1 / -1;
+  color: var(--muted2);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.heatmap-legend.compact {
+  grid-template-columns: auto minmax(90px, 1fr) auto;
+  margin-top: 7px;
+  color: var(--muted2);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.heatmap-legend.compact i {
+  height: 6px;
+}
+
 .interval-maps {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
