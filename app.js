@@ -21,6 +21,7 @@
     selectedId: "",
     rangeDays: "all",
     segmentMeters: 250,
+    calendarMonth: "",
     isAdmin: false,
     uploadKey: "",
   };
@@ -53,8 +54,8 @@
     sessionChart: document.getElementById("sessionChart"),
     intervalCharts: document.getElementById("intervalCharts"),
     chartTooltip: document.getElementById("chartTooltip"),
-    historyChart: document.getElementById("historyChart"),
     historyHighlights: document.getElementById("historyHighlights"),
+    historyCalendar: document.getElementById("historyCalendar"),
     mapFrame: document.getElementById("mapFrame") || { removeAttribute() {}, set src(_value) {} },
     mapTiles: document.getElementById("mapTiles"),
     routeOverlay: document.getElementById("routeOverlay"),
@@ -126,6 +127,7 @@
     elements.exportButton.addEventListener("click", exportSummary);
     elements.sessionSelect.addEventListener("change", (event) => {
       state.selectedId = event.target.value;
+      syncCalendarMonthToSelected();
       render();
     });
     elements.rangeSelect.addEventListener("change", (event) => {
@@ -142,6 +144,7 @@
         handleSessionTableActivate(event);
       }
     });
+    elements.historyCalendar?.addEventListener("click", handleHistoryCalendarActivate);
     elements.sessionChart.addEventListener("mousemove", handleChartHover);
     elements.sessionChart.addEventListener("mouseleave", hideChartTooltip);
     const redrawVisuals = debounce(renderResponsiveVisuals, 150);
@@ -155,8 +158,31 @@
     if (!row) return;
     if (event.type === "keydown") event.preventDefault();
     state.selectedId = row.dataset.sessionId;
+    syncCalendarMonthToSelected();
     render();
     elements.sessionSelect.value = state.selectedId;
+  }
+
+  function handleHistoryCalendarActivate(event) {
+    const actionButton = event.target.closest("[data-calendar-action]");
+    if (actionButton) {
+      const direction = actionButton.dataset.calendarAction === "next" ? 1 : -1;
+      state.calendarMonth = shiftMonthKey(state.calendarMonth || monthKey(new Date()), direction);
+      renderCharts();
+      return;
+    }
+
+    const sessionButton = event.target.closest("[data-session-id]");
+    if (!sessionButton) return;
+    state.selectedId = sessionButton.dataset.sessionId;
+    syncCalendarMonthToSelected();
+    render();
+    elements.sessionSelect.value = state.selectedId;
+  }
+
+  function syncCalendarMonthToSelected() {
+    const session = getSelectedSession();
+    if (session) state.calendarMonth = monthKey(parseDate(session.date));
   }
 
   function handleChartHover(event) {
@@ -312,6 +338,7 @@
     const localSessions = state.isAdmin ? loadStoredSessions() : [];
     state.sessions = mergeSessions([...publicSessions, ...remoteSessions], localSessions);
     state.selectedId = state.sessions[0]?.id || "";
+    syncCalendarMonthToSelected();
     render();
   }
 
@@ -1369,8 +1396,12 @@
   function render() {
     window.__trainingState = state;
     const filtered = filteredSessions();
+    const previousSelectedId = state.selectedId;
     if (!filtered.some((session) => session.id === state.selectedId)) {
       state.selectedId = filtered[0]?.id || state.sessions[0]?.id || "";
+    }
+    if (!state.calendarMonth || state.selectedId !== previousSelectedId) {
+      syncCalendarMonthToSelected();
     }
     renderSessionSelect(filtered);
     renderSummary(filtered);
@@ -1855,7 +1886,7 @@
     drawSessionChart(elements.sessionChart, session);
     renderIntervalCharts(session);
     renderHistoryHighlights(historySessions);
-    drawHistoryChart(elements.historyChart, historySessions);
+    renderHistoryCalendar(historySessions);
   }
 
   function drawSessionChart(canvas, session) {
@@ -2024,7 +2055,7 @@
       {
         label: "Ukupno",
         value: `${formatNumber(totalKm, totalKm >= 10 ? 1 : 2)} km`,
-        note: `${sessions.length} treninga`,
+        note: formatTrainingCount(sessions.length),
       },
       {
         label: "Prosječni split",
@@ -2052,6 +2083,110 @@
         `,
       )
       .join("");
+  }
+
+  function renderHistoryCalendar(sessions) {
+    if (!elements.historyCalendar) return;
+    if (!sessions.length) {
+      elements.historyCalendar.innerHTML = `
+        <div class="calendar-empty">
+          <strong>Nema treninga u odabranom razdoblju</strong>
+          <span>Promijeni filter razdoblja ili dodaj novi CSV trening.</span>
+        </div>
+      `;
+      return;
+    }
+
+    if (!state.calendarMonth) {
+      state.calendarMonth = monthKey(parseDate(sessions[sessions.length - 1].date));
+    }
+
+    const monthDate = monthDateFromKey(state.calendarMonth);
+    const year = monthDate.getFullYear();
+    const month = monthDate.getMonth();
+    const byDate = groupSessionsByDate(sessions);
+    const firstDay = new Date(year, month, 1);
+    const leadingDays = (firstDay.getDay() + 6) % 7;
+    const visibleCells = 42;
+    const monthPrefix = `${year}-${pad2(month + 1)}-`;
+    const monthSessions = sessions.filter((session) => dateKeyFromValue(session.date).startsWith(monthPrefix));
+    const monthKm = sum(monthSessions.map((session) => session.summary.distance || 0)) / 1000;
+    const monthSplit = average(monthSessions.map((session) => session.summary.avgPace));
+
+    const cells = Array.from({ length: visibleCells }, (_item, index) => {
+      const dayOffset = index - leadingDays + 1;
+      const cellDate = new Date(year, month, dayOffset);
+      const key = dateKeyLocal(cellDate);
+      const daySessions = (byDate.get(key) || []).slice().sort(sortByDateDesc);
+      return calendarDayCell(cellDate, daySessions, month);
+    }).join("");
+
+    elements.historyCalendar.innerHTML = `
+      <div class="calendar-toolbar">
+        <button class="calendar-nav" type="button" data-calendar-action="prev" aria-label="Prethodni mjesec">‹</button>
+        <div class="calendar-title">
+          <strong>${escapeHtml(formatCalendarMonth(monthDate))}</strong>
+          <span>${monthSessions.length ? `${formatTrainingCount(monthSessions.length)} · ${formatNumber(monthKm, monthKm >= 10 ? 1 : 2)} km · avg ${formatSplitOnly(monthSplit)}` : "Nema treninga u ovom mjesecu"}</span>
+        </div>
+        <button class="calendar-nav" type="button" data-calendar-action="next" aria-label="Sljedeći mjesec">›</button>
+      </div>
+      <div class="calendar-weekdays" aria-hidden="true">
+        ${["Pon", "Uto", "Sri", "Čet", "Pet", "Sub", "Ned"].map((day) => `<span>${day}</span>`).join("")}
+      </div>
+      <div class="calendar-grid">
+        ${cells}
+      </div>
+    `;
+  }
+
+  function calendarDayCell(date, sessions, currentMonth) {
+    const key = dateKeyLocal(date);
+    const isCurrentMonth = date.getMonth() === currentMonth;
+    const isToday = key === dateKeyLocal(new Date());
+    const isSelected = sessions.some((session) => session.id === state.selectedId);
+    const dayNumber = date.getDate();
+    const baseClasses = [
+      "calendar-day",
+      isCurrentMonth ? "" : "other-month",
+      isToday ? "today" : "",
+      isSelected ? "selected" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    if (!sessions.length) {
+      return `
+        <div class="${baseClasses}">
+          <span class="calendar-date">${dayNumber}</span>
+        </div>
+      `;
+    }
+
+    const primary = sessions[0];
+    const totalKm = sum(sessions.map((session) => session.summary.distance || 0)) / 1000;
+    const avgSplit = average(sessions.map((session) => session.summary.avgPace));
+    const intensity = totalKm >= 8 ? "long" : totalKm >= 4 ? "medium" : "short";
+    const title = sessions.length > 1 ? formatTrainingCount(sessions.length) : sessionTitle(primary);
+    const subtitle = `${formatNumber(totalKm, totalKm >= 10 ? 1 : 2)} km · ${formatSplitOnly(avgSplit)}`;
+
+    return `
+      <button class="${baseClasses} has-session ${intensity}" type="button" data-session-id="${escapeHtml(primary.id)}" title="${escapeHtml(`${formatDate(primary.date)} - ${title}`)}">
+        <span class="calendar-date">${dayNumber}</span>
+        ${sessions.length > 1 ? `<span class="calendar-session-count">${sessions.length}</span>` : ""}
+        <strong>${escapeHtml(title)}</strong>
+        <em>${escapeHtml(subtitle)}</em>
+      </button>
+    `;
+  }
+
+  function groupSessionsByDate(sessions) {
+    const grouped = new Map();
+    sessions.forEach((session) => {
+      const key = dateKeyFromValue(session.date);
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(session);
+    });
+    return grouped;
   }
 
   function drawHistoryChart(canvas, sessions) {
@@ -2859,6 +2994,33 @@
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
   }
 
+  function dateKeyFromValue(value) {
+    return dateKeyLocal(parseDate(value));
+  }
+
+  function dateKeyLocal(date) {
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  }
+
+  function monthKey(date) {
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}`;
+  }
+
+  function monthDateFromKey(value) {
+    const [year, month] = String(value || "").split("-").map(Number);
+    if (!Number.isFinite(year) || !Number.isFinite(month)) return startOfDay(new Date());
+    return new Date(year, month - 1, 1);
+  }
+
+  function shiftMonthKey(value, delta) {
+    const date = monthDateFromKey(value);
+    return monthKey(new Date(date.getFullYear(), date.getMonth() + delta, 1));
+  }
+
+  function pad2(value) {
+    return String(value).padStart(2, "0");
+  }
+
   function sortByDateDesc(a, b) {
     return parseDate(b.date) - parseDate(a.date) || String(b.id).localeCompare(String(a.id));
   }
@@ -2973,6 +3135,10 @@
     });
   }
 
+  function formatTrainingCount(count) {
+    return `${count} ${count === 1 ? "trening" : "treninga"}`;
+  }
+
   function formatDate(value) {
     const date = parseDate(value);
     if (date.getTime() === 0) return "--";
@@ -2989,6 +3155,13 @@
     return date.toLocaleDateString("hr-HR", {
       month: "2-digit",
       day: "2-digit",
+    });
+  }
+
+  function formatCalendarMonth(date) {
+    return date.toLocaleDateString("hr-HR", {
+      month: "long",
+      year: "numeric",
     });
   }
 
