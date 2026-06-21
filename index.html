@@ -17,6 +17,13 @@
         </div>
         <div class="device-badge" id="deviceBadge">SpeedCoach CSV</div>
         <div class="topbar-actions" aria-label="Kontrole dnevnika">
+          <label class="upload-type-control" id="uploadTypeAction" hidden>
+            <span>Tip treninga</span>
+            <select id="uploadType">
+              <option value="duzina">Dužina</option>
+              <option value="vuca">Vuča</option>
+            </select>
+          </label>
           <label class="file-action" id="uploadAction" hidden>
             <input id="csvUpload" type="file" accept=".csv,text/csv" />
             Dodaj trening CSV
@@ -124,6 +131,26 @@
             <canvas id="sessionChart" height="310" aria-label="Graf treninga"></canvas>
             <div class="chart-tooltip" id="chartTooltip" hidden></div>
             <div class="chart-legend" id="sessionLegend"></div>
+            <div class="chart-range-controls" id="chartRangeControls" hidden>
+              <div class="chart-range-heading">
+                <span id="chartRangeSummary">Prikaz cijelog treninga</span>
+                <button id="chartRangeReset" type="button">Reset</button>
+              </div>
+              <div class="chart-range-fields">
+                <label>
+                  <span>Od metra</span>
+                  <input id="chartRangeStart" type="number" min="0" step="10" inputmode="numeric" />
+                </label>
+                <label>
+                  <span>Do metra</span>
+                  <input id="chartRangeEnd" type="number" min="0" step="10" inputmode="numeric" />
+                </label>
+              </div>
+              <div class="dual-range" aria-label="Raspon prikaza grafa">
+                <input id="chartRangeStartSlider" type="range" min="0" max="100" step="10" value="0" aria-label="Početak grafa u metrima" />
+                <input id="chartRangeEndSlider" type="range" min="0" max="100" step="10" value="100" aria-label="Kraj grafa u metrima" />
+              </div>
+            </div>
             <div class="interval-chart-grid" id="intervalCharts" hidden></div>
           </article>
 
@@ -190,8 +217,8 @@
               <h2>Dionice odabranog treninga</h2>
             </div>
           </div>
-          <div class="table-wrap segment-table-wrap">
-            <table class="segment-table">
+          <div class="table-wrap">
+            <table>
               <thead id="segmentHead"></thead>
               <tbody id="segmentTable"></tbody>
             </table>

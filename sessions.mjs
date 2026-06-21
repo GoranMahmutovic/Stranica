@@ -14,7 +14,11 @@ export default async (request) => {
   }
 
   if (request.method === "POST") {
-    return saveSession(request);
+    const payload = await request.json().catch(() => null);
+    if (payload?.action === "delete") {
+      return deleteSession(request, payload);
+    }
+    return saveSession(request, payload);
   }
 
   if (request.method === "DELETE") {
@@ -43,7 +47,7 @@ async function listSessions() {
   return jsonResponse({ sessions, deletedIds: index.deletedIds });
 }
 
-async function saveSession(request) {
+async function saveSession(request, payload = null) {
   const expectedKey = process.env.UPLOAD_KEY;
   if (!expectedKey) {
     return jsonResponse({ error: "UPLOAD_KEY is not configured" }, 500);
@@ -54,7 +58,6 @@ async function saveSession(request) {
     return jsonResponse({ error: "Upload key is missing or invalid" }, 401);
   }
 
-  const payload = await request.json().catch(() => null);
   if (!payload || typeof payload.csvText !== "string" || typeof payload.id !== "string") {
     return jsonResponse({ error: "Invalid session payload" }, 400);
   }
@@ -99,7 +102,7 @@ async function saveSession(request) {
   return jsonResponse({ ok: true, session: nextItem });
 }
 
-async function deleteSession(request) {
+async function deleteSession(request, payload = null) {
   const expectedKey = process.env.UPLOAD_KEY;
   if (!expectedKey) {
     return jsonResponse({ error: "UPLOAD_KEY is not configured" }, 500);
@@ -113,8 +116,8 @@ async function deleteSession(request) {
   const url = new URL(request.url);
   let id = safeId(url.searchParams.get("id"));
   if (!id) {
-    const payload = await request.json().catch(() => null);
-    id = safeId(payload?.id);
+    const body = payload || (await request.json().catch(() => null));
+    id = safeId(body?.id);
   }
   if (!id) {
     return jsonResponse({ error: "Invalid session id" }, 400);

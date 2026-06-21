@@ -22,6 +22,9 @@
     rangeDays: "all",
     segmentMeters: 250,
     calendarMonth: "",
+    chartRangeSessionId: "",
+    chartRangeStart: 0,
+    chartRangeEnd: 0,
     isAdmin: false,
     uploadKey: "",
   };
@@ -29,6 +32,8 @@
   const elements = {
     csvUpload: document.getElementById("csvUpload"),
     uploadAction: document.getElementById("csvUpload")?.closest(".file-action"),
+    uploadType: document.getElementById("uploadType"),
+    uploadTypeAction: document.getElementById("uploadTypeAction"),
     exportButton: document.getElementById("exportButton"),
     uploadStatus: document.getElementById("uploadStatus"),
     headerSubtitle: document.getElementById("headerSubtitle"),
@@ -52,6 +57,13 @@
     detailPower: document.getElementById("detailPower"),
     intervalOverview: document.getElementById("intervalOverview"),
     sessionChart: document.getElementById("sessionChart"),
+    chartRangeControls: document.getElementById("chartRangeControls"),
+    chartRangeStart: document.getElementById("chartRangeStart"),
+    chartRangeEnd: document.getElementById("chartRangeEnd"),
+    chartRangeStartSlider: document.getElementById("chartRangeStartSlider"),
+    chartRangeEndSlider: document.getElementById("chartRangeEndSlider"),
+    chartRangeReset: document.getElementById("chartRangeReset"),
+    chartRangeSummary: document.getElementById("chartRangeSummary"),
     intervalCharts: document.getElementById("intervalCharts"),
     chartTooltip: document.getElementById("chartTooltip"),
     historyHighlights: document.getElementById("historyHighlights"),
@@ -128,6 +140,7 @@
     elements.exportButton.addEventListener("click", exportSummary);
     elements.sessionSelect.addEventListener("change", (event) => {
       state.selectedId = event.target.value;
+      resetChartRange();
       syncCalendarMonthToSelected();
       render();
     });
@@ -148,10 +161,28 @@
     elements.historyCalendar?.addEventListener("click", handleHistoryCalendarActivate);
     elements.sessionChart.addEventListener("mousemove", handleChartHover);
     elements.sessionChart.addEventListener("mouseleave", hideChartTooltip);
+    bindChartRangeControls();
     const redrawVisuals = debounce(renderResponsiveVisuals, 150);
     window.addEventListener("resize", redrawVisuals);
     window.visualViewport?.addEventListener("resize", redrawVisuals);
     window.addEventListener("orientationchange", () => window.setTimeout(renderResponsiveVisuals, 250));
+  }
+
+  function bindChartRangeControls() {
+    const controls = [
+      elements.chartRangeStart,
+      elements.chartRangeEnd,
+      elements.chartRangeStartSlider,
+      elements.chartRangeEndSlider,
+    ].filter(Boolean);
+    controls.forEach((control) => {
+      control.addEventListener("input", () => updateChartRangeFromControls(control));
+      control.addEventListener("change", () => updateChartRangeFromControls(control));
+    });
+    elements.chartRangeReset?.addEventListener("click", () => {
+      resetChartRange();
+      renderCharts();
+    });
   }
 
   function handleSessionTableActivate(event) {
@@ -160,6 +191,7 @@
     if (!row) return;
     if (event.type === "keydown") event.preventDefault();
     state.selectedId = row.dataset.sessionId;
+    resetChartRange();
     syncCalendarMonthToSelected();
     render();
     elements.sessionSelect.value = state.selectedId;
@@ -189,6 +221,7 @@
       state.sessions = state.sessions.filter((item) => item.id !== id);
       if (state.selectedId === id) {
         state.selectedId = state.sessions[0]?.id || "";
+        resetChartRange();
       }
       syncCalendarMonthToSelected();
       render();
@@ -212,6 +245,7 @@
     const sessionButton = event.target.closest("[data-session-id]");
     if (!sessionButton) return;
     state.selectedId = sessionButton.dataset.sessionId;
+    resetChartRange();
     syncCalendarMonthToSelected();
     render();
     elements.sessionSelect.value = state.selectedId;
@@ -317,6 +351,9 @@
 
   function applyAccessMode() {
     document.body.classList.toggle("admin-mode", state.isAdmin);
+    if (elements.uploadTypeAction) {
+      elements.uploadTypeAction.hidden = !state.isAdmin;
+    }
     if (elements.uploadAction) {
       elements.uploadAction.hidden = !state.isAdmin;
     }
@@ -514,6 +551,34 @@
     return Array.from(merged.values()).sort(sortByDateDesc);
   }
 
+  function selectedUploadType() {
+    return elements.uploadType?.value === "vuca" ? "Vuča" : "Dužina";
+  }
+
+  function trainingTypeKey(value) {
+    const normalized = String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "");
+    if (normalized.includes("duzina") || normalized.includes("steady") || normalized.includes("long")) return "duzina";
+    if (
+      normalized.includes("vuca") ||
+      normalized.includes("interval") ||
+      normalized.includes("utrka") ||
+      normalized.includes("race")
+    ) {
+      return "vuca";
+    }
+    return "";
+  }
+
+  function calendarTypeClass(sessions) {
+    const primary = sessions.find((session) => trainingTypeKey(session.type)) || sessions[0];
+    const key = trainingTypeKey(primary?.type);
+    return key ? `type-${key}` : "";
+  }
+
   function handleUpload(event) {
     if (!state.isAdmin) {
       showUploadStatus("Upload je dostupan samo preko tvog admin linka.", true);
@@ -527,10 +592,12 @@
       const csvText = String(reader.result || "");
       try {
         const sessionId = `training-${hashString(`${file.name}\n${csvText}`)}`;
+        const trainingType = selectedUploadType();
         const meta = {
           id: sessionId,
           title: file.name.replace(/\.csv$/i, ""),
           date: dateInputValue(new Date(file.lastModified || Date.now())),
+          type: trainingType,
           source: file.name,
           publicEntry: false,
           storedEntry: true,
@@ -545,7 +612,7 @@
           title: session.title,
           date: session.date,
           startTime: session.startTime,
-          type: session.type,
+          type: trainingType,
         };
         saveStoredSession({
           id: session.id,
@@ -567,6 +634,7 @@
         state.sessions = [nextSession, ...state.sessions.filter((item) => item.id !== nextSession.id)];
         state.sessions.sort(sortByDateDesc);
         state.selectedId = nextSession.id;
+        resetChartRange();
         showUploadStatus(
           `CSV učitan i trajno spremljen u ovom browseru: ${session.title} · ${formatDate(session.date)} · ${formatNumber(session.summary.distance, 1)} m · ${formatDurationTenths(session.summary.duration)}`,
         );
@@ -634,11 +702,16 @@
     if (!state.uploadKey) {
       throw new Error("Nema admin ključa za brisanje.");
     }
-    const response = await fetch(`${REMOTE_SESSIONS_URL}?id=${encodeURIComponent(id)}`, {
-      method: "DELETE",
+    const response = await fetch(REMOTE_SESSIONS_URL, {
+      method: "POST",
       headers: {
+        "content-type": "application/json; charset=utf-8",
         "x-upload-key": state.uploadKey,
       },
+      body: JSON.stringify({
+        action: "delete",
+        id,
+      }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -2309,22 +2382,22 @@
           .map(
             (segment) => `
               <tr class="${segment.isBest ? "best-row" : segment.isWorst ? "worst-row" : ""}">
-                ${hasMultipleIntervals ? `<td data-label="Interval">${escapeHtml(segment.intervalLabel || `Interval ${segment.interval}`)}</td>` : ""}
-                <td data-label="Dionica">${escapeHtml(segment.label)}</td>
-                <td data-label="Faza">${phaseBadge(segment.phase)}</td>
-                <td data-label="Zaveslaji">${segment.strokes}</td>
-                <td data-label="Avg SPM">${barCell(segment.rate, minSpm, maxSpm, "spm")}</td>
-                <td data-label="Split" class="${segment.isBest ? "best-text" : segment.isWorst ? "worst-text" : ""}">
+                ${hasMultipleIntervals ? `<td>${escapeHtml(segment.intervalLabel || `Interval ${segment.interval}`)}</td>` : ""}
+                <td>${escapeHtml(segment.label)}</td>
+                <td>${phaseBadge(segment.phase)}</td>
+                <td>${segment.strokes}</td>
+                <td>${barCell(segment.rate, minSpm, maxSpm, "spm")}</td>
+                <td class="${segment.isBest ? "best-text" : segment.isWorst ? "worst-text" : ""}">
                   ${barCell(segment.pace, minSplit, maxSplit, "split", true)}
                 </td>
-                <td data-label="Tempo">${formatNumber(segment.rate, 1)} spm</td>
-                <td data-label="Trajanje">${formatDurationTenths(segment.duration)}</td>
-                <td data-label="HR">${Number.isFinite(segment.hr) ? formatNumber(segment.hr, 0) : "--"}</td>
+                <td>${formatNumber(segment.rate, 1)} spm</td>
+                <td>${formatDurationTenths(segment.duration)}</td>
+                <td>${Number.isFinite(segment.hr) ? formatNumber(segment.hr, 0) : "--"}</td>
               </tr>
             `,
           )
           .join("")
-      : `<tr class="segment-empty-row"><td colspan="${hasMultipleIntervals ? 9 : 8}">Nema dovoljno per-stroke podataka za dionice.</td></tr>`;
+      : `<tr><td colspan="${hasMultipleIntervals ? 9 : 8}">Nema dovoljno per-stroke podataka za dionice.</td></tr>`;
   }
 
   function renderCharts() {
@@ -2337,11 +2410,146 @@
     renderHistoryCalendar(historySessions);
   }
 
+  function resetChartRange() {
+    state.chartRangeSessionId = "";
+    state.chartRangeStart = 0;
+    state.chartRangeEnd = 0;
+  }
+
+  function syncChartRangeForSession(session, rawMax) {
+    const fullMax = chartRangeMax(rawMax);
+    if (!session) return { start: 0, end: fullMax, fullMax };
+    if (state.chartRangeSessionId !== session.id || !Number.isFinite(state.chartRangeEnd) || state.chartRangeEnd <= 0) {
+      state.chartRangeSessionId = session.id;
+      state.chartRangeStart = 0;
+      state.chartRangeEnd = fullMax;
+    }
+    const normalized = normalizeChartRange(state.chartRangeStart, state.chartRangeEnd, fullMax, "end");
+    state.chartRangeStart = normalized.start;
+    state.chartRangeEnd = normalized.end;
+    return normalized;
+  }
+
+  function chartRangeMax(rawMax) {
+    const max = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : 100;
+    const step = chartRangeStep(max);
+    return Math.max(step, Math.ceil(max / step) * step);
+  }
+
+  function chartRangeStep(max) {
+    if (max > 12000) return 100;
+    if (max > 4000) return 50;
+    return 10;
+  }
+
+  function chartRangeMinWindow(max) {
+    if (max > 12000) return 500;
+    if (max > 4000) return 250;
+    return 80;
+  }
+
+  function normalizeChartRange(startValue, endValue, fullMax, changed = "end") {
+    const step = chartRangeStep(fullMax);
+    const minWindow = Math.min(chartRangeMinWindow(fullMax), Math.max(step, fullMax));
+    let start = roundToStep(Number(startValue), step);
+    let end = roundToStep(Number(endValue), step);
+    if (!Number.isFinite(start)) start = 0;
+    if (!Number.isFinite(end)) end = fullMax;
+    start = Math.max(0, Math.min(fullMax - minWindow, start));
+    end = Math.max(minWindow, Math.min(fullMax, end));
+    if (end - start < minWindow) {
+      if (changed === "start") {
+        end = Math.min(fullMax, start + minWindow);
+        start = Math.max(0, end - minWindow);
+      } else {
+        start = Math.max(0, end - minWindow);
+        end = Math.min(fullMax, start + minWindow);
+      }
+    }
+    return { start, end, fullMax };
+  }
+
+  function updateChartRangeFromControls(source) {
+    const session = getSelectedSession();
+    if (!session) return;
+    const fullMax = chartRangeMax(buildChartData(session).xMax);
+    const changed = source === elements.chartRangeStart || source === elements.chartRangeStartSlider ? "start" : "end";
+    const startSource = source === elements.chartRangeStartSlider ? elements.chartRangeStartSlider : elements.chartRangeStart;
+    const endSource = source === elements.chartRangeEndSlider ? elements.chartRangeEndSlider : elements.chartRangeEnd;
+    const start = Number(startSource?.value);
+    const end = Number(endSource?.value);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+    const normalized = normalizeChartRange(start, end, fullMax, changed);
+    state.chartRangeSessionId = session.id;
+    state.chartRangeStart = normalized.start;
+    state.chartRangeEnd = normalized.end;
+    renderCharts();
+  }
+
+  function renderChartRangeControls(session, rawMax, range) {
+    if (!elements.chartRangeControls) return;
+    if (!session) {
+      elements.chartRangeControls.hidden = true;
+      return;
+    }
+    const fullMax = chartRangeMax(rawMax);
+    const step = chartRangeStep(fullMax);
+    elements.chartRangeControls.hidden = false;
+    [
+      elements.chartRangeStart,
+      elements.chartRangeEnd,
+      elements.chartRangeStartSlider,
+      elements.chartRangeEndSlider,
+    ].filter(Boolean).forEach((input) => {
+      input.min = "0";
+      input.max = String(fullMax);
+      input.step = String(step);
+    });
+    if (elements.chartRangeStart) elements.chartRangeStart.value = String(Math.round(range.start));
+    if (elements.chartRangeEnd) elements.chartRangeEnd.value = String(Math.round(range.end));
+    if (elements.chartRangeStartSlider) elements.chartRangeStartSlider.value = String(Math.round(range.start));
+    if (elements.chartRangeEndSlider) elements.chartRangeEndSlider.value = String(Math.round(range.end));
+    if (elements.chartRangeSummary) {
+      const isFull = range.start <= 0 && range.end >= fullMax;
+      elements.chartRangeSummary.textContent = isFull
+        ? `Prikaz cijelog treninga: 0-${Math.round(fullMax)} m`
+        : `Prikaz grafa: ${Math.round(range.start)}-${Math.round(range.end)} m`;
+    }
+    const leftPercent = (range.start / fullMax) * 100;
+    const rightPercent = 100 - (range.end / fullMax) * 100;
+    elements.chartRangeControls.style.setProperty("--range-left", `${leftPercent}%`);
+    elements.chartRangeControls.style.setProperty("--range-right", `${rightPercent}%`);
+  }
+
+  function applyChartRange(chartData, range) {
+    const start = Number.isFinite(range?.start) ? range.start : 0;
+    const end = Number.isFinite(range?.end) ? range.end : chartData.xMax;
+    const series = chartData.series.map((serie) => ({
+      ...serie,
+      points: serie.points.filter((point) => point.chartX >= start && point.chartX <= end),
+    }));
+    return {
+      ...chartData,
+      series,
+      points: series.flatMap((serie) => serie.points),
+      xMin: start,
+      xMax: Math.max(start + 1, end),
+    };
+  }
+
+  function roundToStep(value, step) {
+    if (!Number.isFinite(value)) return NaN;
+    return Math.round(value / step) * step;
+  }
+
   function drawSessionChart(canvas, session) {
     const ctx = setupCanvas(canvas);
     clearCanvas(ctx, canvas);
     canvas._strokeHits = [];
-    const chartData = buildChartData(session);
+    const fullChartData = buildChartData(session);
+    const range = syncChartRangeForSession(session, fullChartData.xMax);
+    renderChartRangeControls(session, fullChartData.xMax, range);
+    const chartData = applyChartRange(fullChartData, range);
     const points = chartData.points;
     if (!session || points.length < 2) {
       drawEmptyChart(ctx, canvas, "Nema treninga za graf.");
@@ -2350,6 +2558,7 @@
     }
 
     const plot = chartBounds(canvas);
+    const xMin = chartData.xMin || 0;
     const xMax = chartData.xMax;
     canvas._chartXMax = xMax;
     const splitValues = points.map((point) => point.pace);
@@ -2359,26 +2568,26 @@
     const splitPad = Math.max(1, (splitMax - splitMin) * 0.08);
     const spmMin = minFinite(spmValues) - 2;
     const spmMax = maxFinite(spmValues) + 2;
-    const avgSplit = session.summary.avgPace;
-    const avgRate = session.summary.rate;
 
-    drawRaceGrid(ctx, plot, xMax, splitMin - splitPad, splitMax + splitPad + 4, spmMin, spmMax);
+    drawRaceGrid(ctx, plot, xMin, xMax, splitMin - splitPad, splitMax + splitPad + 4, spmMin, spmMax);
     chartData.series.forEach((serie) => {
       const rawSplit = serie.points.map((point) => ({ x: point.chartX, y: point.pace }));
       const spmLine = serie.points.map((point) => ({ x: point.chartX, y: point.rate }));
-      drawLineCustom(ctx, rawSplit, plot, { min: 0, max: xMax }, {
+      drawLineCustom(ctx, rawSplit, plot, { min: xMin, max: xMax }, {
         min: splitMin - splitPad,
         max: splitMax + splitPad + 4,
         inverted: true,
       }, COLORS.pace, 2.3);
-      drawLineCustom(ctx, spmLine, plot, { min: 0, max: xMax }, {
+      drawLineCustom(ctx, spmLine, plot, { min: xMin, max: xMax }, {
         min: spmMin,
         max: spmMax,
         inverted: false,
       }, COLORS.rate, 1.5);
     });
-    drawIntervalGuides(ctx, plot, chartData, state.segmentMeters);
-    drawStrokeDots(ctx, canvas, points, plot, xMax, splitMin - splitPad, splitMax + splitPad + 4);
+    drawIntervalGuides(ctx, plot, chartData, state.segmentMeters, xMin, xMax);
+    drawStrokeDots(ctx, canvas, points, plot, xMin, xMax, splitMin - splitPad, splitMax + splitPad + 4);
+    const avgSplit = average(points.map((point) => point.pace));
+    const avgRate = average(points.map((point) => point.rate));
     drawAverageLine(ctx, plot, avgSplit, splitMin - splitPad, splitMax + splitPad + 4, true, COLORS.green, `avg ${formatSplitOnly(avgSplit)}`);
     drawAverageLine(ctx, plot, avgRate, spmMin, spmMax, false, "rgba(255,107,53,0.65)", `avg ${formatNumber(avgRate, 1)} spm`, true);
 
@@ -2443,7 +2652,7 @@
     const spmMax = maxFinite(points.map((point) => point.rate)) + 2;
     const color = intervalColor(interval.index);
 
-    drawRaceGrid(ctx, plot, distanceMax, splitMin, splitMax, spmMin, spmMax);
+    drawRaceGrid(ctx, plot, 0, distanceMax, splitMin, splitMax, spmMin, spmMax);
     drawLineCustom(ctx, points.map((point) => ({ x: point.localDistance, y: point.pace })), plot, {
       min: 0,
       max: distanceMax,
@@ -2461,7 +2670,7 @@
       inverted: false,
     }, COLORS.rate, 1.3);
     drawIntervalSegmentGuides(ctx, plot, distanceMax, state.segmentMeters);
-    drawStrokeDots(ctx, canvas, points, plot, distanceMax, splitMin, splitMax, color);
+    drawStrokeDots(ctx, canvas, points, plot, 0, distanceMax, splitMin, splitMax, color);
     drawAverageLine(ctx, plot, interval.avgPace, splitMin, splitMax, true, COLORS.green, `I${interval.interval} ${formatSplitOnly(interval.avgPace)}`);
     drawAverageLine(ctx, plot, interval.rate, spmMin, spmMax, false, "rgba(255,107,53,0.62)", `${formatNumber(interval.rate, 1)} spm`, true);
     drawIntervalChartBadge(ctx, canvas, interval, color);
@@ -2614,11 +2823,12 @@
     const totalKm = sum(sessions.map((session) => session.summary.distance || 0)) / 1000;
     const avgSplit = average(sessions.map((session) => session.summary.avgPace));
     const intensity = totalKm >= 8 ? "long" : totalKm >= 4 ? "medium" : "short";
+    const typeClass = calendarTypeClass(sessions);
     const title = sessions.length > 1 ? formatTrainingCount(sessions.length) : sessionTitle(primary);
     const subtitle = `${formatNumber(totalKm, totalKm >= 10 ? 1 : 2)} km · ${formatSplitOnly(avgSplit)}`;
 
     return `
-      <button class="${baseClasses} has-session ${intensity}" type="button" data-session-id="${escapeHtml(primary.id)}" title="${escapeHtml(`${formatDate(primary.date)} - ${title}`)}">
+      <button class="${baseClasses} has-session ${intensity} ${typeClass}" type="button" data-session-id="${escapeHtml(primary.id)}" title="${escapeHtml(`${formatDate(primary.date)} - ${title}`)}">
         <span class="calendar-date">${dayNumber}</span>
         ${sessions.length > 1 ? `<span class="calendar-session-count">${sessions.length}</span>` : ""}
         <strong>${escapeHtml(title)}</strong>
@@ -2899,7 +3109,7 @@
     ctx.restore();
   }
 
-  function drawRaceGrid(ctx, plot, xMax, splitMin, splitMax, spmMin, spmMax) {
+  function drawRaceGrid(ctx, plot, xMin, xMax, splitMin, splitMax, spmMin, spmMax) {
     ctx.save();
     ctx.strokeStyle = COLORS.grid;
     ctx.fillStyle = COLORS.muted;
@@ -2922,9 +3132,10 @@
       ctx.fillStyle = COLORS.rate;
       ctx.fillText(`${formatNumber(spmValue, 0)} spm`, plot.right + 8, y + 4);
     }
-    const steps = distanceGridSteps(xMax);
-    for (let distance = 0; distance <= xMax + 0.001; distance += steps.minor) {
-      const x = scale(distance, 0, xMax, plot.left, plot.right);
+    const steps = distanceGridSteps(xMax - xMin);
+    const firstDistance = Math.ceil(xMin / steps.minor) * steps.minor;
+    for (let distance = firstDistance; distance <= xMax + 0.001; distance += steps.minor) {
+      const x = scale(distance, xMin, xMax, plot.left, plot.right);
       const isMajor = Math.round(distance) % steps.major === 0;
       ctx.strokeStyle = isMajor ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.035)";
       ctx.beginPath();
@@ -2991,7 +3202,7 @@
     };
   }
 
-  function drawIntervalGuides(ctx, plot, chartData, meters) {
+  function drawIntervalGuides(ctx, plot, chartData, meters, xMin = 0, xMax = chartData.xMax) {
     ctx.save();
     ctx.font = "10px ui-monospace, SFMono-Regular, Consolas, monospace";
     ctx.textAlign = "center";
@@ -3003,15 +3214,19 @@
       ctx.strokeStyle = "rgba(255,255,255,0.12)";
       ctx.setLineDash([5, 5]);
       if (index > 0) {
-        const x = scale(serie.chartStart, 0, chartData.xMax, plot.left, plot.right);
-        ctx.beginPath();
-        ctx.moveTo(x, plot.top);
-        ctx.lineTo(x, plot.bottom);
-        ctx.stroke();
+        if (serie.chartStart >= xMin && serie.chartStart <= xMax) {
+          const x = scale(serie.chartStart, xMin, xMax, plot.left, plot.right);
+          ctx.beginPath();
+          ctx.moveTo(x, plot.top);
+          ctx.lineTo(x, plot.bottom);
+          ctx.stroke();
+        }
       }
       ctx.setLineDash([2, 4]);
       for (let distance = meters; distance < serie.distance; distance += meters) {
-        const x = scale(serie.chartStart + distance, 0, chartData.xMax, plot.left, plot.right);
+        const marker = serie.chartStart + distance;
+        if (marker < xMin || marker > xMax) continue;
+        const x = scale(marker, xMin, xMax, plot.left, plot.right);
         ctx.beginPath();
         ctx.moveTo(x, plot.top);
         ctx.lineTo(x, plot.bottom);
@@ -3075,11 +3290,11 @@
     ctx.restore();
   }
 
-  function drawStrokeDots(ctx, canvas, points, plot, xMax, splitMin, splitMax, color = "rgba(59,125,255,0.88)") {
+  function drawStrokeDots(ctx, canvas, points, plot, xMin, xMax, splitMin, splitMax, color = "rgba(59,125,255,0.88)") {
     const hits = [];
     ctx.save();
     points.forEach((point) => {
-      const x = scale(Number.isFinite(point.chartX) ? point.chartX : point.distance, 0, xMax, plot.left, plot.right);
+      const x = scale(Number.isFinite(point.chartX) ? point.chartX : point.distance, xMin, xMax, plot.left, plot.right);
       const y = scale(point.pace, splitMin, splitMax, plot.top, plot.bottom);
       ctx.fillStyle = color;
       ctx.beginPath();

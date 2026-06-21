@@ -140,6 +140,36 @@ select:focus-visible,
   justify-content: flex-end;
 }
 
+.upload-type-control {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface2);
+  padding: 0 10px;
+  font-family: var(--mono);
+}
+
+.upload-type-control span {
+  color: var(--muted2);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.upload-type-control select {
+  min-height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .eyebrow {
   margin: 0 0 6px;
   text-transform: uppercase;
@@ -568,6 +598,22 @@ button.calendar-day:hover {
   box-shadow: inset 0 0 0 1px rgba(34, 216, 110, 0.5), 0 10px 26px rgba(34, 216, 110, 0.08);
 }
 
+.calendar-day.has-session.type-duzina {
+  border-color: rgba(59, 125, 255, 0.78);
+}
+
+.calendar-day.has-session.type-vuca {
+  border-color: rgba(255, 79, 79, 0.78);
+}
+
+.calendar-day.has-session.type-duzina.selected {
+  box-shadow: inset 0 0 0 1px rgba(59, 125, 255, 0.52), 0 10px 26px rgba(59, 125, 255, 0.1);
+}
+
+.calendar-day.has-session.type-vuca.selected {
+  box-shadow: inset 0 0 0 1px rgba(255, 79, 79, 0.5), 0 10px 26px rgba(255, 79, 79, 0.1);
+}
+
 .calendar-day.has-session::before {
   content: "";
   position: absolute;
@@ -720,6 +766,132 @@ button.calendar-day:hover {
 
 .orange-line {
   background: repeating-linear-gradient(90deg, var(--accent2) 0, var(--accent2) 5px, transparent 5px, transparent 9px);
+}
+
+.chart-range-controls {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 11px;
+}
+
+.chart-range-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted2);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.chart-range-heading button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.chart-range-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.chart-range-fields label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted2);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.chart-range-fields input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface3);
+  color: var(--text);
+  padding: 0 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dual-range {
+  position: relative;
+  height: 34px;
+  margin-top: 12px;
+}
+
+.dual-range::before,
+.dual-range::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 14px;
+  height: 6px;
+  border-radius: 999px;
+}
+
+.dual-range::before {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dual-range::after {
+  left: var(--range-left, 0%);
+  right: var(--range-right, 0%);
+  background: linear-gradient(90deg, var(--accent), var(--green));
+}
+
+.dual-range input[type="range"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 34px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.dual-range input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.dual-range input[type="range"]:last-child::-webkit-slider-thumb {
+  background: var(--green);
+}
+
+.dual-range input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.dual-range input[type="range"]:last-child::-moz-range-thumb {
+  background: var(--green);
 }
 
 .interval-chart-grid {
@@ -1153,10 +1325,6 @@ button.calendar-day:hover {
   background: var(--surface);
 }
 
-.segment-table-wrap {
-  overflow: auto;
-}
-
 table {
   width: 100%;
   min-width: 760px;
@@ -1234,10 +1402,6 @@ tbody tr:hover {
   outline: 1px solid rgba(59, 125, 255, 0.55);
   outline-offset: -1px;
   background: rgba(59, 125, 255, 0.08);
-}
-
-.segment-table td[data-label]::before {
-  content: none;
 }
 
 tbody tr:last-child td {
@@ -1345,6 +1509,10 @@ tbody tr:last-child td {
     flex: 1 1 140px;
   }
 
+  .upload-type-control {
+    justify-content: space-between;
+  }
+
   .control-band {
     grid-template-columns: 1fr;
   }
@@ -1399,98 +1567,9 @@ tbody tr:last-child td {
     padding: 12px;
   }
 
-  .segment-table-wrap {
-    overflow: visible;
-    border: 0;
-    background: transparent;
-  }
-
-  .segment-table {
-    display: block;
-    min-width: 0;
-    width: 100%;
-  }
-
-  .segment-table thead {
-    display: none;
-  }
-
-  .segment-table tbody {
-    display: grid;
-    gap: 10px;
-  }
-
-  .segment-table tr {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px 10px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.025);
-    padding: 10px;
-  }
-
-  .segment-table tr:hover {
-    background: rgba(59, 125, 255, 0.06);
-  }
-
-  .segment-table td {
-    display: grid;
-    min-width: 0;
-    gap: 3px;
-    border-bottom: 0;
-    padding: 0;
-    text-align: left;
-    white-space: normal;
-  }
-
-  .segment-table td[data-label]::before {
-    content: attr(data-label);
-    color: var(--muted2);
-    font-family: var(--mono);
-    font-size: 9px;
-    font-weight: 900;
-    line-height: 1.1;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-
-  .segment-table td[data-label="Interval"],
-  .segment-table td[data-label="Dionica"],
-  .segment-table td[data-label="Faza"] {
-    grid-column: 1 / -1;
-  }
-
-  .segment-table td[data-label="Dionica"] {
-    color: var(--text);
-    font-size: 14px;
-    font-weight: 900;
-  }
-
-  .segment-table td[data-label="Faza"] {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-
-  .segment-table td[data-label="Faza"]::before {
-    flex: 0 0 auto;
-  }
-
-  .segment-table .split-bar-wrap,
-  .segment-table .spm-bar-wrap {
-    justify-content: space-between;
-    gap: 6px;
-  }
-
-  .segment-table .split-bar-wrap span,
-  .segment-table .spm-bar-wrap span {
-    min-width: auto;
-  }
-
-  .segment-empty-row {
-    display: block;
+  .chart-range-heading {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .panel-heading {
@@ -1516,12 +1595,10 @@ tbody tr:last-child td {
     min-height: 60px;
   }
 
-}
-
-@media (max-width: 360px) {
-  .segment-table tr {
+  .chart-range-fields {
     grid-template-columns: 1fr;
   }
+
 }
 
 @media print {
