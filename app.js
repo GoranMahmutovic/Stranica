@@ -143,7 +143,10 @@
     });
     elements.sessionChart.addEventListener("mousemove", handleChartHover);
     elements.sessionChart.addEventListener("mouseleave", hideChartTooltip);
-    window.addEventListener("resize", debounce(renderCharts, 150));
+    const redrawCharts = debounce(renderCharts, 150);
+    window.addEventListener("resize", redrawCharts);
+    window.visualViewport?.addEventListener("resize", redrawCharts);
+    window.addEventListener("orientationchange", () => window.setTimeout(renderCharts, 250));
   }
 
   function handleSessionTableActivate(event) {
@@ -1373,7 +1376,14 @@
     renderSessionDetails(getSelectedSession());
     renderTables(filtered);
     renderCharts();
+    queueChartRenderAfterLayout();
     elements.emptyState.hidden = state.sessions.length > 0;
+  }
+
+  function queueChartRenderAfterLayout() {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(renderCharts);
+    });
   }
 
   function filteredSessions() {
@@ -2005,19 +2015,45 @@
 
   function setupCanvas(canvas) {
     const rect = canvas.getBoundingClientRect();
-    const ratio = window.devicePixelRatio || 1;
-    const width = Math.max(320, Math.floor(rect.width * ratio));
-    const height = Math.max(220, Math.floor(Number(canvas.getAttribute("height") || 280) * ratio));
+    const parentRect = canvas.parentElement?.getBoundingClientRect?.() || {};
+    const panelRect = canvas.closest?.(".panel, .interval-chart-card")?.getBoundingClientRect?.() || {};
+    const viewportWidth = document.documentElement.clientWidth || window.innerWidth || 360;
+    const cssWidth = Math.max(
+      240,
+      Math.floor(rect.width || parentRect.width || panelRect.width || viewportWidth - 32),
+    );
+    const cssHeight = getCanvasCssHeight(canvas);
+    const ratio = Math.min(window.devicePixelRatio || 1, 3);
+    const width = Math.floor(cssWidth * ratio);
+    const height = Math.floor(cssHeight * ratio);
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
     }
+    canvas.style.width = "100%";
+    canvas.style.height = `${cssHeight}px`;
     const ctx = canvas.getContext("2d");
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(ratio, ratio);
-    canvas.widthCss = width / ratio;
-    canvas.heightCss = height / ratio;
+    canvas.widthCss = cssWidth;
+    canvas.heightCss = cssHeight;
     return ctx;
+  }
+
+  function getCanvasCssHeight(canvas) {
+    if (canvas.dataset.cssHeight) return Number(canvas.dataset.cssHeight);
+    const attrHeight = Number(canvas.getAttribute("height"));
+    const computedHeight = Number.parseFloat(window.getComputedStyle(canvas).height);
+    const cssHeight = Math.max(
+      180,
+      Math.floor(
+        (Number.isFinite(attrHeight) && attrHeight > 0 ? attrHeight : 0)
+          || (Number.isFinite(computedHeight) && computedHeight > 0 ? computedHeight : 0)
+          || 280,
+      ),
+    );
+    canvas.dataset.cssHeight = String(cssHeight);
+    return cssHeight;
   }
 
   function clearCanvas(ctx, canvas) {

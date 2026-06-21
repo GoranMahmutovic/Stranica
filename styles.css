@@ -410,9 +410,18 @@ canvas {
   display: block;
   width: 100%;
   max-width: 100%;
+  height: 280px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface3);
+}
+
+#sessionChart {
+  height: 310px;
+}
+
+#historyChart {
+  height: 280px;
 }
 
 .chart-tooltip {
@@ -528,7 +537,7 @@ canvas {
 }
 
 .interval-chart {
-  height: auto;
+  height: 210px;
 }
 
 .route-stats {
