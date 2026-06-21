@@ -54,6 +54,7 @@
     intervalCharts: document.getElementById("intervalCharts"),
     chartTooltip: document.getElementById("chartTooltip"),
     historyChart: document.getElementById("historyChart"),
+    historyHighlights: document.getElementById("historyHighlights"),
     mapFrame: document.getElementById("mapFrame") || { removeAttribute() {}, set src(_value) {} },
     mapTiles: document.getElementById("mapTiles"),
     routeOverlay: document.getElementById("routeOverlay"),
@@ -143,10 +144,10 @@
     });
     elements.sessionChart.addEventListener("mousemove", handleChartHover);
     elements.sessionChart.addEventListener("mouseleave", hideChartTooltip);
-    const redrawCharts = debounce(renderCharts, 150);
-    window.addEventListener("resize", redrawCharts);
-    window.visualViewport?.addEventListener("resize", redrawCharts);
-    window.addEventListener("orientationchange", () => window.setTimeout(renderCharts, 250));
+    const redrawVisuals = debounce(renderResponsiveVisuals, 150);
+    window.addEventListener("resize", redrawVisuals);
+    window.visualViewport?.addEventListener("resize", redrawVisuals);
+    window.addEventListener("orientationchange", () => window.setTimeout(renderResponsiveVisuals, 250));
   }
 
   function handleSessionTableActivate(event) {
@@ -1376,14 +1377,19 @@
     renderSessionDetails(getSelectedSession());
     renderTables(filtered);
     renderCharts();
-    queueChartRenderAfterLayout();
+    queueResponsiveVisualsAfterLayout();
     elements.emptyState.hidden = state.sessions.length > 0;
   }
 
-  function queueChartRenderAfterLayout() {
+  function queueResponsiveVisualsAfterLayout() {
     window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(renderCharts);
+      window.requestAnimationFrame(renderResponsiveVisuals);
     });
+  }
+
+  function renderResponsiveVisuals() {
+    renderCharts();
+    renderStaticMapPanel(getSelectedSession());
   }
 
   function filteredSessions() {
@@ -1492,7 +1498,6 @@
       .filter(Boolean)
       .map((value) => `<div>${escapeHtml(value)}</div>`)
       .join("");
-    renderGpsPanel(session);
     renderStaticMapPanel(session);
   }
 
@@ -1524,6 +1529,14 @@
   }
 
   function renderStaticMapPanel(session) {
+    if (!session) {
+      elements.mapTiles.innerHTML = "";
+      elements.routeOverlay.innerHTML = "";
+      elements.routeOverlay.setAttribute("viewBox", "0 0 100 100");
+      if (elements.mapLabels) elements.mapLabels.innerHTML = "";
+      elements.routeStats.innerHTML = "";
+      return;
+    }
     const routeGroups = groupPointsByInterval(session.points)
       .map((group) => group.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon)))
       .filter((group) => group.length >= 2);
@@ -1531,38 +1544,35 @@
     if (route.length < 2) {
       elements.mapTiles.innerHTML = "";
       elements.routeOverlay.innerHTML = "";
+      elements.routeOverlay.setAttribute("viewBox", "0 0 100 100");
       if (elements.mapLabels) elements.mapLabels.innerHTML = "";
       elements.routeStats.innerHTML = "<div>GPS koordinate nisu dostupne u ovom CSV-u.</div>";
       return;
     }
+    const mapView = buildStaticMapView(route);
+    const { width, height, zoom, topLeftX, topLeftY, tileMinX, tileMaxX, tileMinY, tileMaxY } = mapView;
     const centerLat = average(route.map((point) => point.lat));
     const centerLon = average(route.map((point) => point.lon));
-    const zoom = chooseMapZoom(route);
-    const centerTile = latLonToTile(centerLat, centerLon, zoom);
-    const origin = {
-      x: Math.floor(centerTile.x) - 1,
-      y: Math.floor(centerTile.y) - 1,
-    };
+    const tileLimit = 2 ** zoom;
     elements.mapTiles.innerHTML = "";
-    for (let y = 0; y < 3; y += 1) {
-      for (let x = 0; x < 3; x += 1) {
+    elements.routeOverlay.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    elements.routeOverlay.setAttribute("preserveAspectRatio", "none");
+    for (let tileY = tileMinY; tileY <= tileMaxY; tileY += 1) {
+      if (tileY < 0 || tileY >= tileLimit) continue;
+      for (let tileX = tileMinX; tileX <= tileMaxX; tileX += 1) {
+        const wrappedX = ((tileX % tileLimit) + tileLimit) % tileLimit;
         const img = document.createElement("img");
         img.className = "map-tile";
         img.alt = "";
         img.loading = "lazy";
-        img.src = `https://tile.openstreetmap.org/${zoom}/${origin.x + x}/${origin.y + y}.png`;
-        img.style.left = `${(x / 3) * 100}%`;
-        img.style.top = `${(y / 3) * 100}%`;
+        img.decoding = "async";
+        img.src = `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${tileY}.png`;
+        img.style.left = `${Math.round(tileX * 256 - topLeftX)}px`;
+        img.style.top = `${Math.round(tileY * 256 - topLeftY)}px`;
         elements.mapTiles.append(img);
       }
     }
-    const project = (point) => {
-      const tile = latLonToTile(point.lat, point.lon, zoom);
-      return {
-        x: ((tile.x - origin.x) / 3) * 100,
-        y: ((tile.y - origin.y) / 3) * 100,
-      };
-    };
+    const project = (point) => mapView.project(point);
     const paths = routeGroups
       .map((group, index) => {
         const color = intervalColor(index);
@@ -1584,8 +1594,8 @@
     const finish = project(last);
     elements.routeOverlay.innerHTML = `
       ${paths}
-      <circle class="map-route-point" cx="${start.x.toFixed(3)}" cy="${start.y.toFixed(3)}" r="2.1"></circle>
-      <circle class="map-route-point finish" cx="${finish.x.toFixed(3)}" cy="${finish.y.toFixed(3)}" r="2.1"></circle>
+      <circle class="map-route-point" cx="${start.x.toFixed(3)}" cy="${start.y.toFixed(3)}" r="7"></circle>
+      <circle class="map-route-point finish" cx="${finish.x.toFixed(3)}" cy="${finish.y.toFixed(3)}" r="7"></circle>
     `;
     if (elements.mapLabels) {
       const labels = routeGroups.length > 1
@@ -1617,6 +1627,7 @@
       `GPS točaka: ${route.length}`,
       routeGroups.length > 1 ? `GPS dionica: ${routeGroups.length}` : "",
       intervalLegend,
+      `Zoom karte: ${zoom}`,
       `Start: ${formatNumber(first.lat, 5)}, ${formatNumber(first.lon, 5)}`,
       `Cilj: ${formatNumber(last.lat, 5)}, ${formatNumber(last.lon, 5)}`,
       `<a class="map-link" href="${osmUrl}" target="_blank" rel="noreferrer">Otvori na OpenStreetMap</a>`,
@@ -1627,8 +1638,10 @@
   }
 
   function mapLabelHtml(text, position, type, color) {
-    const x = Math.max(4, Math.min(96, position.x));
-    const y = Math.max(6, Math.min(94, position.y));
+    const rawX = Number.isFinite(position.xPercent) ? position.xPercent : position.x;
+    const rawY = Number.isFinite(position.yPercent) ? position.yPercent : position.y;
+    const x = Math.max(4, Math.min(96, rawX));
+    const y = Math.max(6, Math.min(94, rawY));
     return `<span class="map-label ${type}" style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%;--label-color:${color}">${escapeHtml(text)}</span>`;
   }
 
@@ -1638,6 +1651,72 @@
     return {
       x: ((lon + 180) / 360) * scaleValue,
       y: ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * scaleValue,
+    };
+  }
+
+  function latLonToWorldPixel(lat, lon, zoom) {
+    const tile = latLonToTile(lat, lon, zoom);
+    return {
+      x: tile.x * 256,
+      y: tile.y * 256,
+    };
+  }
+
+  function buildStaticMapView(route) {
+    const rect = elements.mapTiles?.getBoundingClientRect?.() || {};
+    const width = Math.max(320, Math.round(rect.width || elements.mapTiles?.clientWidth || 420));
+    const height = Math.max(300, Math.round(rect.height || elements.mapTiles?.clientHeight || 340));
+    const padding = Math.max(22, Math.min(width, height) * 0.06);
+    let zoom = 12;
+    let pixels = [];
+
+    for (let candidate = 18; candidate >= 6; candidate -= 1) {
+      const candidatePixels = route.map((point) => latLonToWorldPixel(point.lat, point.lon, candidate));
+      const spanX = maxFinite(candidatePixels.map((point) => point.x)) - minFinite(candidatePixels.map((point) => point.x));
+      const spanY = maxFinite(candidatePixels.map((point) => point.y)) - minFinite(candidatePixels.map((point) => point.y));
+      if (spanX <= width - padding * 2 && spanY <= height - padding * 2) {
+        zoom = candidate;
+        pixels = candidatePixels;
+        break;
+      }
+    }
+
+    if (!pixels.length) {
+      pixels = route.map((point) => latLonToWorldPixel(point.lat, point.lon, zoom));
+    }
+
+    const minX = minFinite(pixels.map((point) => point.x));
+    const maxX = maxFinite(pixels.map((point) => point.x));
+    const minY = minFinite(pixels.map((point) => point.y));
+    const maxY = maxFinite(pixels.map((point) => point.y));
+    const routeWidth = Math.max(1, maxX - minX);
+    const routeHeight = Math.max(1, maxY - minY);
+    const centerX = minX + routeWidth / 2;
+    const centerY = minY + routeHeight / 2;
+    const topLeftX = Math.round(centerX - width / 2);
+    const topLeftY = Math.round(centerY - height / 2);
+
+    return {
+      width,
+      height,
+      zoom,
+      topLeftX,
+      topLeftY,
+      tileMinX: Math.floor(topLeftX / 256) - 1,
+      tileMaxX: Math.floor((topLeftX + width) / 256) + 1,
+      tileMinY: Math.floor(topLeftY / 256) - 1,
+      tileMaxY: Math.floor((topLeftY + height) / 256) + 1,
+      project(point) {
+        const projected = latLonToWorldPixel(point.lat, point.lon, zoom);
+        const x = projected.x - topLeftX;
+        const y = projected.y - topLeftY;
+        return {
+          x,
+          y,
+          xPercent: (x / width) * 100,
+          yPercent: (y / height) * 100,
+        };
+      },
     };
   }
 
@@ -1772,9 +1851,11 @@
   function renderCharts() {
     hideChartTooltip();
     const session = getSelectedSession();
+    const historySessions = filteredSessions().slice().reverse();
     drawSessionChart(elements.sessionChart, session);
     renderIntervalCharts(session);
-    drawHistoryChart(elements.historyChart, filteredSessions().slice().reverse());
+    renderHistoryHighlights(historySessions);
+    drawHistoryChart(elements.historyChart, historySessions);
   }
 
   function drawSessionChart(canvas, session) {
@@ -1924,6 +2005,55 @@
       });
   }
 
+  function renderHistoryHighlights(sessions) {
+    if (!elements.historyHighlights) return;
+    if (!sessions.length) {
+      elements.historyHighlights.innerHTML = "";
+      return;
+    }
+    const totalKm = sum(sessions.map((session) => session.summary.distance || 0)) / 1000;
+    const avgSplit = average(sessions.map((session) => session.summary.avgPace));
+    const bestSession = sessions
+      .filter((session) => Number.isFinite(session.summary.avgPace))
+      .sort((a, b) => a.summary.avgPace - b.summary.avgPace)[0];
+    const longestSession = sessions
+      .filter((session) => Number.isFinite(session.summary.distance))
+      .sort((a, b) => b.summary.distance - a.summary.distance)[0];
+
+    elements.historyHighlights.innerHTML = [
+      {
+        label: "Ukupno",
+        value: `${formatNumber(totalKm, totalKm >= 10 ? 1 : 2)} km`,
+        note: `${sessions.length} treninga`,
+      },
+      {
+        label: "Prosječni split",
+        value: formatSplitOnly(avgSplit),
+        note: "u odabranom razdoblju",
+      },
+      {
+        label: "Najbolji zapis",
+        value: bestSession ? formatSplitOnly(bestSession.summary.avgPace) : "--",
+        note: bestSession ? formatDateShort(bestSession.date) : "--",
+      },
+      {
+        label: "Najduži trening",
+        value: longestSession ? `${formatNumber(longestSession.summary.distance / 1000, 1)} km` : "--",
+        note: longestSession ? formatDateShort(longestSession.date) : "--",
+      },
+    ]
+      .map(
+        (item) => `
+          <div class="trend-highlight">
+            <span>${escapeHtml(item.label)}</span>
+            <strong>${escapeHtml(item.value)}</strong>
+            <em>${escapeHtml(item.note)}</em>
+          </div>
+        `,
+      )
+      .join("");
+  }
+
   function drawHistoryChart(canvas, sessions) {
     const ctx = setupCanvas(canvas);
     clearCanvas(ctx, canvas);
@@ -1931,44 +2061,99 @@
       drawEmptyChart(ctx, canvas, "Nema treninga u odabranom razdoblju.");
       return;
     }
-    const plot = chartBounds(canvas);
+    const width = canvas.widthCss || canvas.width;
+    const height = canvas.heightCss || canvas.height;
+    const plot = {
+      left: 52,
+      top: 42,
+      right: width - 20,
+      bottom: height - 46,
+      width: width - 72,
+      height: height - 88,
+    };
     const distances = sessions.map((session) => session.summary.distance / 1000);
-    const paceValues = sessions.map((session) => session.summary.avgPace).filter(Number.isFinite);
     const maxDistance = Math.max(1, maxFinite(distances));
-    const paceMin = paceValues.length ? minFinite(paceValues) : 0;
-    const paceMax = paceValues.length ? maxFinite(paceValues) : 1;
-    const barWidth = Math.max(8, (plot.width / sessions.length) * 0.54);
+    const gapCount = Math.max(1, sessions.length);
+    const slotWidth = plot.width / gapCount;
+    const barWidth = Math.max(10, Math.min(56, slotWidth * 0.56));
+    const labelEvery = Math.max(1, Math.ceil(sessions.length / Math.max(1, Math.floor(plot.width / 74))));
 
-    drawGrid(ctx, plot, {
-      xLabels: sessions.map((session, index) => ({
-        value: index,
-        label: formatDateShort(session.date),
-      })),
-      yLabels: makeAxisLabels(0, maxDistance, 4, (value) =>
-        `${formatNumber(value, maxDistance >= 10 ? 0 : 1)} km`,
-      ),
+    ctx.save();
+    ctx.fillStyle = "rgba(255,255,255,0.78)";
+    ctx.font = "800 11px ui-monospace, SFMono-Regular, Consolas, monospace";
+    ctx.textAlign = "left";
+    ctx.fillText("Kilometri po treningu", plot.left, 22);
+    ctx.fillStyle = COLORS.muted;
+    ctx.font = "10px ui-monospace, SFMono-Regular, Consolas, monospace";
+    ctx.fillText("Split je označen po treningu, bez povezivanja stupaca", plot.left, 36);
+
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.lineWidth = 1;
+    ctx.fillStyle = COLORS.muted;
+    ctx.textAlign = "right";
+    ctx.font = "10px ui-monospace, SFMono-Regular, Consolas, monospace";
+    makeAxisLabels(0, maxDistance, 4, (value) => `${formatNumber(value, maxDistance >= 10 ? 0 : 1)} km`).forEach((item) => {
+      const y = scale(item.value, 0, maxDistance, plot.bottom, plot.top);
+      ctx.beginPath();
+      ctx.moveTo(plot.left, y);
+      ctx.lineTo(plot.right, y);
+      ctx.stroke();
+      ctx.fillText(item.label, plot.left - 9, y + 4);
     });
 
     sessions.forEach((session, index) => {
-      const x = plot.left + (sessions.length === 1 ? plot.width / 2 : (index / (sessions.length - 1)) * plot.width);
-      const height = (distances[index] / maxDistance) * plot.height;
-      ctx.fillStyle = COLORS.distance;
-      ctx.fillRect(x - barWidth / 2, plot.bottom - height, barWidth, height);
-    });
+      const x = plot.left + slotWidth * index + slotWidth / 2;
+      const barHeight = Math.max(3, (distances[index] / maxDistance) * plot.height);
+      const barTop = plot.bottom - barHeight;
+      const isSelected = session.id === state.selectedId;
+      const gradient = ctx.createLinearGradient(0, barTop, 0, plot.bottom);
+      gradient.addColorStop(0, isSelected ? "rgba(34,216,110,0.95)" : "rgba(59,125,255,0.94)");
+      gradient.addColorStop(1, isSelected ? "rgba(34,216,110,0.34)" : "rgba(59,125,255,0.26)");
 
-    const paceLine = sessions
-      .map((session, index) => ({ x: index, y: session.summary.avgPace }))
-      .filter((point) => Number.isFinite(point.y));
-    if (paceLine.length > 1) {
-      drawLine(
-        ctx,
-        paceLine,
-        plot,
-        { min: 0, max: Math.max(1, sessions.length - 1) },
-        { min: paceMin - 5, max: paceMax + 5 },
-        COLORS.red,
-      );
-    }
+      ctx.fillStyle = gradient;
+      roundRect(ctx, x - barWidth / 2, barTop, barWidth, barHeight, 6);
+      ctx.fill();
+
+      if (isSelected) {
+        ctx.strokeStyle = "rgba(34,216,110,0.95)";
+        ctx.lineWidth = 2;
+        roundRect(ctx, x - barWidth / 2 - 2, barTop - 2, barWidth + 4, barHeight + 4, 7);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = "rgba(255,255,255,0.88)";
+      ctx.textAlign = "center";
+      ctx.font = "800 10px ui-monospace, SFMono-Regular, Consolas, monospace";
+      ctx.fillText(`${formatNumber(distances[index], distances[index] >= 10 ? 1 : 2)} km`, x, Math.max(plot.top + 12, barTop - 8));
+
+      if (Number.isFinite(session.summary.avgPace) && sessions.length <= 14) {
+        drawHistoryPill(ctx, formatSplitOnly(session.summary.avgPace), x, Math.max(plot.top + 18, barTop - 31), isSelected);
+      }
+
+      if (index % labelEvery === 0 || index === sessions.length - 1) {
+        ctx.fillStyle = COLORS.muted2;
+        ctx.font = "10px ui-monospace, SFMono-Regular, Consolas, monospace";
+        ctx.fillText(formatDateShort(session.date), x, plot.bottom + 24);
+      }
+    });
+    ctx.restore();
+  }
+
+  function drawHistoryPill(ctx, label, x, y, isSelected) {
+    const width = Math.max(48, label.length * 6.5 + 15);
+    ctx.save();
+    ctx.fillStyle = isSelected ? "rgba(34,216,110,0.18)" : "rgba(15,17,23,0.82)";
+    ctx.strokeStyle = isSelected ? "rgba(34,216,110,0.82)" : "rgba(255,255,255,0.16)";
+    ctx.lineWidth = 1;
+    roundRect(ctx, x - width / 2, y, width, 20, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = isSelected ? COLORS.green : "rgba(255,255,255,0.86)";
+    ctx.font = "800 10px ui-monospace, SFMono-Regular, Consolas, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, x, y + 10);
+    ctx.restore();
   }
 
   function drawRouteChart(canvas, session) {

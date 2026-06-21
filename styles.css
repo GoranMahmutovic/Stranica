@@ -424,6 +424,48 @@ canvas {
   height: 280px;
 }
 
+.trend-highlights {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.trend-highlight {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+  padding: 10px 11px;
+}
+
+.trend-highlight span {
+  display: block;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.trend-highlight strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.1;
+}
+
+.trend-highlight em {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted2);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-style: normal;
+}
+
 .chart-tooltip {
   position: fixed;
   z-index: 50;
@@ -551,11 +593,12 @@ canvas {
 
 .map-wrap {
   position: relative;
-  min-height: 320px;
+  min-height: 460px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #d7dde5;
+  background: #d5dce5;
+  isolation: isolate;
 }
 
 .map-tiles,
@@ -570,11 +613,12 @@ canvas {
 
 .map-tile {
   position: absolute;
-  width: 33.3334%;
-  height: 33.3334%;
+  width: 256px;
+  height: 256px;
   object-fit: cover;
   filter: saturate(0.56) brightness(1.08) contrast(0.92);
   opacity: 0.82;
+  transform: translateZ(0);
 }
 
 .map-wrap svg {
@@ -589,7 +633,7 @@ canvas {
 .map-route-halo {
   fill: none;
   stroke: rgba(255, 255, 255, 0.9);
-  stroke-width: 3.4;
+  stroke-width: 6;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -597,7 +641,7 @@ canvas {
 .map-route-line {
   fill: none;
   stroke: var(--accent);
-  stroke-width: 1.6;
+  stroke-width: 3.2;
   stroke-linecap: round;
   stroke-linejoin: round;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.34));
@@ -606,7 +650,7 @@ canvas {
 .map-route-point {
   fill: var(--green);
   stroke: #ffffff;
-  stroke-width: 0.7;
+  stroke-width: 2;
 }
 
 .map-route-point.finish {
@@ -986,6 +1030,10 @@ tbody tr:last-child td {
   }
 
   .interval-chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .trend-highlights {
     grid-template-columns: 1fr;
   }
 
