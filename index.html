@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="hr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Analiza treninga | SpeedCoach</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">NK SpeedCoach 2</p>
+          <h1>Analiza treninga</h1>
+          <div class="subtitle" id="headerSubtitle">Javni veslački dnevnik</div>
+        </div>
+        <div class="device-badge" id="deviceBadge">SpeedCoach CSV</div>
+        <div class="topbar-actions" aria-label="Kontrole dnevnika">
+          <label class="file-action" id="uploadAction" hidden>
+            <input id="csvUpload" type="file" accept=".csv,text/csv" />
+            Dodaj trening CSV
+          </label>
+          <button id="exportButton" type="button">Izvezi sažetak</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="control-band" aria-label="Filteri i odabir treninga">
+          <div class="control-field control-field-wide">
+            <label for="sessionSelect">Trening</label>
+            <select id="sessionSelect"></select>
+          </div>
+          <div class="control-field">
+            <label for="rangeSelect">Razdoblje</label>
+            <select id="rangeSelect">
+              <option value="all">Sve</option>
+              <option value="7">7 dana</option>
+              <option value="30">30 dana</option>
+              <option value="90">90 dana</option>
+            </select>
+          </div>
+          <div class="control-field">
+            <label for="segmentSize">Segmenti</label>
+            <select id="segmentSize">
+              <option value="250" selected>250 m</option>
+              <option value="500">500 m</option>
+              <option value="1000">1000 m</option>
+            </select>
+          </div>
+        </section>
+
+        <div class="upload-status" id="uploadStatus" role="status" aria-live="polite" hidden></div>
+
+        <section class="summary-grid" aria-label="Sažetak dnevnika">
+          <article class="metric-card">
+            <span>Ukupno vrijeme</span>
+            <strong id="metricSessions">0</strong>
+            <em>MM:SS.t</em>
+          </article>
+          <article class="metric-card">
+            <span>Distanca</span>
+            <strong id="metricDistance">0.0</strong>
+            <em>GPS metara</em>
+          </article>
+          <article class="metric-card">
+            <span>Avg split /500m</span>
+            <strong id="metricDuration">0:00</strong>
+            <em>službeni summary</em>
+          </article>
+          <article class="metric-card">
+            <span>Avg tempo (SPM)</span>
+            <strong id="metricPace">--</strong>
+            <em>zaveslaja/min</em>
+          </article>
+          <article class="metric-card">
+            <span>Ukupno zaveslaja</span>
+            <strong id="metricRate">--</strong>
+            <em>SpeedCoach</em>
+          </article>
+          <article class="metric-card">
+            <span>Dist / zaveslaj</span>
+            <strong id="metricBest500">--</strong>
+            <em>m/zaveslaj</em>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <article class="panel session-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Odabrani trening</p>
+                <h2 id="sessionTitle">Nema podataka</h2>
+              </div>
+              <div class="session-meta" id="sessionMeta"></div>
+            </div>
+            <div class="detail-grid">
+              <div>
+                <span>Najboljih 500 m</span>
+                <strong id="detailDistance">--</strong>
+              </div>
+              <div>
+                <span>Najboljih 1000 m</span>
+                <strong id="detailDuration">--</strong>
+              </div>
+              <div>
+                <span>Točke grafa</span>
+                <strong id="detailPace">--</strong>
+              </div>
+              <div>
+                <span>Max tempo</span>
+                <strong id="detailRate">--</strong>
+              </div>
+              <div>
+                <span>HR</span>
+                <strong id="detailHr">--</strong>
+              </div>
+              <div>
+                <span>Snaga</span>
+                <strong id="detailPower">--</strong>
+              </div>
+            </div>
+            <div class="interval-overview" id="intervalOverview" hidden></div>
+            <canvas id="sessionChart" height="310" aria-label="Graf treninga"></canvas>
+            <div class="chart-tooltip" id="chartTooltip" hidden></div>
+            <div class="chart-legend" id="sessionLegend"></div>
+            <div class="interval-chart-grid" id="intervalCharts" hidden></div>
+          </article>
+
+          <aside class="panel route-panel">
+            <div class="panel-heading compact">
+              <div>
+                <p class="eyebrow">Ruta</p>
+                <h2>Karta treninga</h2>
+              </div>
+            </div>
+            <div class="map-wrap" id="mapWrap">
+              <div class="map-tiles" id="mapTiles" aria-hidden="true"></div>
+              <svg id="routeOverlay" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+              <div class="map-labels" id="mapLabels" aria-hidden="true"></div>
+              <div class="map-attribution">© OpenStreetMap</div>
+            </div>
+            <div class="route-stats" id="routeStats"></div>
+          </aside>
+        </section>
+
+        <section class="content-grid lower-grid">
+          <article class="panel">
+            <div class="panel-heading compact">
+              <div>
+                <p class="eyebrow">Trend</p>
+                <h2>Dnevnik kroz vrijeme</h2>
+              </div>
+            </div>
+            <canvas id="historyChart" height="280" aria-label="Povijesni graf treninga"></canvas>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading compact">
+              <div>
+                <p class="eyebrow">Pregled</p>
+                <h2>Svi treninzi</h2>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Datum</th>
+                    <th>Naziv</th>
+                    <th>km</th>
+                    <th>Vrijeme</th>
+                    <th>Split</th>
+                    <th>Rate</th>
+                  </tr>
+                </thead>
+                <tbody id="sessionTable"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        <section class="panel segment-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Analiza ritma</p>
+              <h2>Dionice odabranog treninga</h2>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead id="segmentHead"></thead>
+              <tbody id="segmentTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="empty-state" id="emptyState" hidden>
+          <h2>Nema objavljenih treninga</h2>
+          <p>Treninzi će se ovdje pojaviti čim ih vlasnik dnevnika objavi kroz admin link.</p>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

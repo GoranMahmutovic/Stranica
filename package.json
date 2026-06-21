@@ -1,0 +1,16 @@
+{
+  "name": "speedcoach-training-diary",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "netlify dev",
+    "deploy": "netlify deploy --prod --dir ."
+  },
+  "dependencies": {
+    "@netlify/blobs": "^10.0.8"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.38.1"
+  }
+}
