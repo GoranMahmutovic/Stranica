@@ -1738,9 +1738,7 @@
         const distance = Number.isFinite(point.localDistance) ? point.localDistance : point.distance;
         return Number.isFinite(distance) && Number.isFinite(point.pace) && Number.isFinite(point.rate);
       });
-      const timePoints = allPoints
-        .filter((point) => Number.isFinite(point.segmentTime))
-        .sort((a, b) => a.segmentDistance - b.segmentDistance);
+      const timePoints = buildSegmentTimePoints(allPoints, interval);
       if (!points.length && timePoints.length < 2) return;
       const maxDistance = Number.isFinite(interval.distance)
         ? interval.distance
@@ -1759,9 +1757,17 @@
         if (!slice.length && timePoints.length < 2) continue;
         const startTime = interpolateSegmentTimeAtDistance(timePoints, start);
         const endTime = interpolateSegmentTimeAtDistance(timePoints, end);
-        const duration = Number.isFinite(startTime) && Number.isFinite(endTime) ? endTime - startTime : NaN;
-        const measuredSplit = duration > 0 && segmentDistance > 0 ? duration / (segmentDistance / 500) : NaN;
-        const avgSplit = Number.isFinite(measuredSplit) ? measuredSplit : average(slice.map((point) => point.pace));
+        const measuredDuration = Number.isFinite(startTime) && Number.isFinite(endTime) ? endTime - startTime : NaN;
+        const measuredSplit = measuredDuration > 0 && segmentDistance > 0
+          ? measuredDuration / (segmentDistance / 500)
+          : NaN;
+        const sliceSplit = average(slice.map((point) => point.pace));
+        const avgSplit = Number.isFinite(measuredSplit) ? measuredSplit : sliceSplit;
+        const duration = Number.isFinite(measuredDuration)
+          ? measuredDuration
+          : Number.isFinite(avgSplit) && segmentDistance > 0
+            ? avgSplit * (segmentDistance / 500)
+            : NaN;
         const avgSpm = average(slice.map((point) => point.rate));
         const endLabel = isLast ? Math.round(maxDistance) : Math.round(end);
         segments.push({
@@ -1788,6 +1794,40 @@
       isBest: Number.isFinite(segment.pace) && segment.pace === best,
       isWorst: Number.isFinite(segment.pace) && segment.pace === worst,
     }));
+  }
+
+  function buildSegmentTimePoints(points, interval) {
+    const timePoints = points
+      .filter((point) => Number.isFinite(point.segmentDistance) && Number.isFinite(point.segmentTime))
+      .map((point) => ({
+        segmentDistance: Math.max(0, point.segmentDistance),
+        segmentTime: Math.max(0, point.segmentTime),
+      }));
+
+    timePoints.push({ segmentDistance: 0, segmentTime: 0 });
+    if (Number.isFinite(interval.distance) && Number.isFinite(interval.duration) && interval.distance > 0 && interval.duration > 0) {
+      timePoints.push({
+        segmentDistance: interval.distance,
+        segmentTime: interval.duration,
+      });
+    }
+
+    return normalizeSegmentTimePoints(timePoints);
+  }
+
+  function normalizeSegmentTimePoints(points) {
+    return points
+      .filter((point) => Number.isFinite(point.segmentDistance) && Number.isFinite(point.segmentTime))
+      .sort((a, b) => a.segmentDistance - b.segmentDistance || a.segmentTime - b.segmentTime)
+      .reduce((normalized, point) => {
+        const previous = normalized.at(-1);
+        if (previous && Math.abs(previous.segmentDistance - point.segmentDistance) < 0.001) {
+          previous.segmentTime = Math.max(previous.segmentTime, point.segmentTime);
+        } else {
+          normalized.push({ ...point });
+        }
+        return normalized;
+      }, []);
   }
 
   function interpolateSegmentTimeAtDistance(points, targetDistance) {
