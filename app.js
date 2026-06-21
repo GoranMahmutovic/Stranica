@@ -2309,22 +2309,22 @@
           .map(
             (segment) => `
               <tr class="${segment.isBest ? "best-row" : segment.isWorst ? "worst-row" : ""}">
-                ${hasMultipleIntervals ? `<td>${escapeHtml(segment.intervalLabel || `Interval ${segment.interval}`)}</td>` : ""}
-                <td>${escapeHtml(segment.label)}</td>
-                <td>${phaseBadge(segment.phase)}</td>
-                <td>${segment.strokes}</td>
-                <td>${barCell(segment.rate, minSpm, maxSpm, "spm")}</td>
-                <td class="${segment.isBest ? "best-text" : segment.isWorst ? "worst-text" : ""}">
+                ${hasMultipleIntervals ? `<td data-label="Interval">${escapeHtml(segment.intervalLabel || `Interval ${segment.interval}`)}</td>` : ""}
+                <td data-label="Dionica">${escapeHtml(segment.label)}</td>
+                <td data-label="Faza">${phaseBadge(segment.phase)}</td>
+                <td data-label="Zaveslaji">${segment.strokes}</td>
+                <td data-label="Avg SPM">${barCell(segment.rate, minSpm, maxSpm, "spm")}</td>
+                <td data-label="Split" class="${segment.isBest ? "best-text" : segment.isWorst ? "worst-text" : ""}">
                   ${barCell(segment.pace, minSplit, maxSplit, "split", true)}
                 </td>
-                <td>${formatNumber(segment.rate, 1)} spm</td>
-                <td>${formatDurationTenths(segment.duration)}</td>
-                <td>${Number.isFinite(segment.hr) ? formatNumber(segment.hr, 0) : "--"}</td>
+                <td data-label="Tempo">${formatNumber(segment.rate, 1)} spm</td>
+                <td data-label="Trajanje">${formatDurationTenths(segment.duration)}</td>
+                <td data-label="HR">${Number.isFinite(segment.hr) ? formatNumber(segment.hr, 0) : "--"}</td>
               </tr>
             `,
           )
           .join("")
-      : `<tr><td colspan="${hasMultipleIntervals ? 9 : 8}">Nema dovoljno per-stroke podataka za dionice.</td></tr>`;
+      : `<tr class="segment-empty-row"><td colspan="${hasMultipleIntervals ? 9 : 8}">Nema dovoljno per-stroke podataka za dionice.</td></tr>`;
   }
 
   function renderCharts() {

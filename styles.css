@@ -1153,6 +1153,10 @@ button.calendar-day:hover {
   background: var(--surface);
 }
 
+.segment-table-wrap {
+  overflow: auto;
+}
+
 table {
   width: 100%;
   min-width: 760px;
@@ -1230,6 +1234,10 @@ tbody tr:hover {
   outline: 1px solid rgba(59, 125, 255, 0.55);
   outline-offset: -1px;
   background: rgba(59, 125, 255, 0.08);
+}
+
+.segment-table td[data-label]::before {
+  content: none;
 }
 
 tbody tr:last-child td {
@@ -1391,6 +1399,100 @@ tbody tr:last-child td {
     padding: 12px;
   }
 
+  .segment-table-wrap {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .segment-table {
+    display: block;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .segment-table thead {
+    display: none;
+  }
+
+  .segment-table tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .segment-table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.025);
+    padding: 10px;
+  }
+
+  .segment-table tr:hover {
+    background: rgba(59, 125, 255, 0.06);
+  }
+
+  .segment-table td {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+    border-bottom: 0;
+    padding: 0;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .segment-table td[data-label]::before {
+    content: attr(data-label);
+    color: var(--muted2);
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 900;
+    line-height: 1.1;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .segment-table td[data-label="Interval"],
+  .segment-table td[data-label="Dionica"],
+  .segment-table td[data-label="Faza"] {
+    grid-column: 1 / -1;
+  }
+
+  .segment-table td[data-label="Dionica"] {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 900;
+  }
+
+  .segment-table td[data-label="Faza"] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .segment-table td[data-label="Faza"]::before {
+    flex: 0 0 auto;
+  }
+
+  .segment-table .split-bar-wrap,
+  .segment-table .spm-bar-wrap {
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .segment-table .split-bar-wrap span,
+  .segment-table .spm-bar-wrap span {
+    min-width: auto;
+  }
+
+  .segment-empty-row {
+    display: block;
+  }
+
   .panel-heading {
     flex-direction: column;
   }
@@ -1412,6 +1514,13 @@ tbody tr:last-child td {
 
   .calendar-day {
     min-height: 60px;
+  }
+
+}
+
+@media (max-width: 360px) {
+  .segment-table tr {
+    grid-template-columns: 1fr;
   }
 }
 
