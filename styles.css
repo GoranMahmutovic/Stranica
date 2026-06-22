@@ -448,6 +448,9 @@ canvas {
 
 #sessionChart {
   height: 310px;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
 }
 
 .trend-highlights {
@@ -766,6 +769,20 @@ button.calendar-day:hover {
 
 .orange-line {
   background: repeating-linear-gradient(90deg, var(--accent2) 0, var(--accent2) 5px, transparent 5px, transparent 9px);
+}
+
+.selection-summary {
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid rgba(34, 216, 110, 0.26);
+  border-radius: 8px;
+  background: rgba(34, 216, 110, 0.08);
+  color: var(--text);
+  padding: 7px 9px;
+}
+
+.selection-line {
+  background: rgba(34, 216, 110, 0.75);
 }
 
 .chart-range-controls {

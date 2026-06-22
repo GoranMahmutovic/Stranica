@@ -25,6 +25,9 @@
     chartRangeSessionId: "",
     chartRangeStart: 0,
     chartRangeEnd: 0,
+    chartSelectionSessionId: "",
+    chartSelectionStart: NaN,
+    chartSelectionEnd: NaN,
     isAdmin: false,
     uploadKey: "",
   };
@@ -80,6 +83,15 @@
     segmentTable: document.getElementById("segmentTable"),
     emptyState: document.getElementById("emptyState"),
   };
+
+  const chartTouchState = {
+    mode: "",
+    startX: 0,
+    startY: 0,
+    startRange: null,
+    moved: false,
+  };
+  let mainChartRenderFrame = null;
 
   const columnHints = {
     time: [
@@ -160,6 +172,11 @@
     });
     elements.historyCalendar?.addEventListener("click", handleHistoryCalendarActivate);
     elements.sessionChart.addEventListener("mousemove", handleChartHover);
+    elements.sessionChart.addEventListener("click", handleChartClick);
+    elements.sessionChart.addEventListener("touchstart", handleChartTouchStart, { passive: false });
+    elements.sessionChart.addEventListener("touchmove", handleChartTouchMove, { passive: false });
+    elements.sessionChart.addEventListener("touchend", handleChartTouchEnd, { passive: false });
+    elements.sessionChart.addEventListener("touchcancel", handleChartTouchEnd, { passive: false });
     elements.sessionChart.addEventListener("mouseleave", hideChartTooltip);
     bindChartRangeControls();
     const redrawVisuals = debounce(renderResponsiveVisuals, 150);
@@ -181,7 +198,7 @@
     });
     elements.chartRangeReset?.addEventListener("click", () => {
       resetChartRange();
-      renderCharts();
+      renderMainChartOnly();
     });
   }
 
@@ -264,32 +281,156 @@
 
   function handleChartHover(event) {
     const canvas = event.currentTarget || elements.sessionChart;
+    showNearestChartPoint(canvas, event.clientX, event.clientY);
+  }
+
+  function handleChartClick(event) {
+    const canvas = event.currentTarget || elements.sessionChart;
+    showNearestChartPoint(canvas, event.clientX, event.clientY, true);
+  }
+
+  function showNearestChartPoint(canvas, clientX, clientY, force = false) {
     const hits = canvas._strokeHits || [];
-    if (!hits.length) {
+    const plot = canvas._chartPlot;
+    if (!hits.length || !plot) {
       hideChartTooltip();
-      return;
+      return null;
     }
     const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    let nearest = null;
-    let nearestDistance = Infinity;
-    hits.forEach((hit) => {
-      const dx = hit.x - x;
-      const dy = hit.y - y;
-      const distance = dx * dx + dy * dy;
-      if (distance < nearestDistance) {
-        nearest = hit;
-        nearestDistance = distance;
-      }
-    });
-    if (!nearest || nearestDistance > 100) {
+    const x = clientX - rect.left;
+    const insideChart = x >= plot.left - 16 && x <= plot.right + 16;
+    if (!force && !insideChart) {
       canvas.style.cursor = "default";
       hideChartTooltip();
-      return;
+      return null;
+    }
+    const nearest = nearestStrokeHit(hits, x);
+    if (!nearest) {
+      hideChartTooltip();
+      return null;
     }
     canvas.style.cursor = "pointer";
-    showChartTooltip(event, nearest.point);
+    showChartTooltip({ clientX, clientY }, nearest.point);
+    return nearest.point;
+  }
+
+  function nearestStrokeHit(hits, x) {
+    if (!hits.length) return null;
+    let low = 0;
+    let high = hits.length - 1;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (hits[mid].x < x) low = mid + 1;
+      else high = mid;
+    }
+    const right = hits[low];
+    const left = hits[Math.max(0, low - 1)];
+    if (!left) return right;
+    if (!right) return left;
+    return Math.abs(left.x - x) <= Math.abs(right.x - x) ? left : right;
+  }
+
+  function handleChartTouchStart(event) {
+    if (!event.touches?.length) return;
+    if (event.touches.length >= 2) {
+      chartTouchState.mode = "select";
+      chartTouchState.moved = true;
+      updateTouchSelection(event);
+      event.preventDefault();
+      return;
+    }
+
+    const touch = event.touches[0];
+    chartTouchState.mode = "pan";
+    chartTouchState.startX = touch.clientX;
+    chartTouchState.startY = touch.clientY;
+    chartTouchState.startRange = {
+      start: state.chartRangeStart,
+      end: state.chartRangeEnd,
+    };
+    chartTouchState.moved = false;
+    showNearestChartPoint(elements.sessionChart, touch.clientX, touch.clientY, true);
+  }
+
+  function handleChartTouchMove(event) {
+    if (!event.touches?.length) return;
+    if (event.touches.length >= 2) {
+      chartTouchState.mode = "select";
+      chartTouchState.moved = true;
+      updateTouchSelection(event);
+      event.preventDefault();
+      return;
+    }
+    if (chartTouchState.mode !== "pan" || !chartTouchState.startRange) return;
+
+    const touch = event.touches[0];
+    const dx = touch.clientX - chartTouchState.startX;
+    const dy = touch.clientY - chartTouchState.startY;
+    if (Math.abs(dx) < 4 && Math.abs(dy) < 8) return;
+    chartTouchState.moved = true;
+    panChartRangeByPixels(dx);
+    showNearestChartPoint(elements.sessionChart, touch.clientX, touch.clientY, true);
+    event.preventDefault();
+  }
+
+  function handleChartTouchEnd(event) {
+    if (event.touches?.length >= 2) return;
+    if (event.touches?.length === 1) {
+      const touch = event.touches[0];
+      chartTouchState.mode = "pan";
+      chartTouchState.startX = touch.clientX;
+      chartTouchState.startY = touch.clientY;
+      chartTouchState.startRange = {
+        start: state.chartRangeStart,
+        end: state.chartRangeEnd,
+      };
+      return;
+    }
+    chartTouchState.mode = "";
+    chartTouchState.startRange = null;
+    chartTouchState.moved = false;
+  }
+
+  function updateTouchSelection(event) {
+    const session = getSelectedSession();
+    if (!session || !event.touches || event.touches.length < 2) return;
+    const first = chartXFromClientX(elements.sessionChart, event.touches[0].clientX);
+    const second = chartXFromClientX(elements.sessionChart, event.touches[1].clientX);
+    if (!Number.isFinite(first) || !Number.isFinite(second)) return;
+    state.chartSelectionSessionId = session.id;
+    state.chartSelectionStart = Math.min(first, second);
+    state.chartSelectionEnd = Math.max(first, second);
+    scheduleMainChartRender({ keepTooltip: true });
+  }
+
+  function panChartRangeByPixels(dx) {
+    const session = getSelectedSession();
+    const canvas = elements.sessionChart;
+    const plot = canvas._chartPlot;
+    const chartRange = canvas._chartRange;
+    if (!session || !plot || !chartRange || !chartTouchState.startRange) return;
+    const windowSize = chartTouchState.startRange.end - chartTouchState.startRange.start;
+    if (!Number.isFinite(windowSize) || windowSize <= 0) return;
+    const metersPerPixel = windowSize / Math.max(1, plot.width);
+    const shift = -dx * metersPerPixel;
+    const normalized = normalizeChartRangeWindow(
+      chartTouchState.startRange.start + shift,
+      chartTouchState.startRange.end + shift,
+      chartRange.fullMax,
+    );
+    state.chartRangeSessionId = session.id;
+    state.chartRangeStart = normalized.start;
+    state.chartRangeEnd = normalized.end;
+    scheduleMainChartRender({ keepTooltip: true });
+  }
+
+  function chartXFromClientX(canvas, clientX) {
+    const plot = canvas._chartPlot;
+    const chartRange = canvas._chartRange;
+    if (!plot || !chartRange) return NaN;
+    const rect = canvas.getBoundingClientRect();
+    const x = clamp(clientX - rect.left, plot.left, plot.right);
+    return scale(x, plot.left, plot.right, chartRange.xMin, chartRange.xMax);
   }
 
   function showChartTooltip(event, point) {
@@ -2728,10 +2869,30 @@
     renderHistoryCalendar(historySessions);
   }
 
+  function renderMainChartOnly(options = {}) {
+    if (!options.keepTooltip) hideChartTooltip();
+    drawSessionChart(elements.sessionChart, getSelectedSession());
+  }
+
+  function scheduleMainChartRender(options = {}) {
+    if (mainChartRenderFrame) return;
+    mainChartRenderFrame = window.requestAnimationFrame(() => {
+      mainChartRenderFrame = null;
+      renderMainChartOnly(options);
+    });
+  }
+
+  function clearChartSelection() {
+    state.chartSelectionSessionId = "";
+    state.chartSelectionStart = NaN;
+    state.chartSelectionEnd = NaN;
+  }
+
   function resetChartRange() {
     state.chartRangeSessionId = "";
     state.chartRangeStart = 0;
     state.chartRangeEnd = 0;
+    clearChartSelection();
   }
 
   function syncChartRangeForSession(session, rawMax) {
@@ -2742,7 +2903,7 @@
       state.chartRangeStart = 0;
       state.chartRangeEnd = fullMax;
     }
-    const normalized = normalizeChartRange(state.chartRangeStart, state.chartRangeEnd, fullMax, "end");
+    const normalized = normalizeChartRange(state.chartRangeStart, state.chartRangeEnd, fullMax, "end", false);
     state.chartRangeStart = normalized.start;
     state.chartRangeEnd = normalized.end;
     return normalized;
@@ -2766,11 +2927,11 @@
     return 80;
   }
 
-  function normalizeChartRange(startValue, endValue, fullMax, changed = "end") {
+  function normalizeChartRange(startValue, endValue, fullMax, changed = "end", snap = true) {
     const step = chartRangeStep(fullMax);
     const minWindow = Math.min(chartRangeMinWindow(fullMax), Math.max(step, fullMax));
-    let start = roundToStep(Number(startValue), step);
-    let end = roundToStep(Number(endValue), step);
+    let start = snap ? roundToStep(Number(startValue), step) : Number(startValue);
+    let end = snap ? roundToStep(Number(endValue), step) : Number(endValue);
     if (!Number.isFinite(start)) start = 0;
     if (!Number.isFinite(end)) end = fullMax;
     start = Math.max(0, Math.min(fullMax - minWindow, start));
@@ -2787,21 +2948,45 @@
     return { start, end, fullMax };
   }
 
+  function normalizeChartRangeWindow(startValue, endValue, fullMax) {
+    const minWindow = Math.min(chartRangeMinWindow(fullMax), Math.max(1, fullMax));
+    const windowSize = Math.max(minWindow, Number(endValue) - Number(startValue));
+    const maxStart = Math.max(0, fullMax - windowSize);
+    const start = clamp(Number(startValue), 0, maxStart);
+    return {
+      start,
+      end: Math.min(fullMax, start + windowSize),
+      fullMax,
+    };
+  }
+
   function updateChartRangeFromControls(source) {
     const session = getSelectedSession();
     if (!session) return;
-    const fullMax = chartRangeMax(buildChartData(session).xMax);
+    const fullMax = chartRangeMax(getFullChartData(session).xMax);
     const changed = source === elements.chartRangeStart || source === elements.chartRangeStartSlider ? "start" : "end";
-    const startSource = source === elements.chartRangeStartSlider ? elements.chartRangeStartSlider : elements.chartRangeStart;
-    const endSource = source === elements.chartRangeEndSlider ? elements.chartRangeEndSlider : elements.chartRangeEnd;
-    const start = Number(startSource?.value);
-    const end = Number(endSource?.value);
+    const isSlider = source === elements.chartRangeStartSlider || source === elements.chartRangeEndSlider;
+    const start = readRangeInputValue(
+      isSlider ? elements.chartRangeStartSlider : elements.chartRangeStart,
+      state.chartRangeStart,
+    );
+    const end = readRangeInputValue(
+      isSlider ? elements.chartRangeEndSlider : elements.chartRangeEnd,
+      state.chartRangeEnd || fullMax,
+    );
     if (!Number.isFinite(start) || !Number.isFinite(end)) return;
-    const normalized = normalizeChartRange(start, end, fullMax, changed);
+    const normalized = normalizeChartRange(start, end, fullMax, changed, isSlider);
     state.chartRangeSessionId = session.id;
     state.chartRangeStart = normalized.start;
     state.chartRangeEnd = normalized.end;
-    renderCharts();
+    renderMainChartOnly();
+  }
+
+  function readRangeInputValue(input, fallback) {
+    const raw = String(input?.value ?? "").trim();
+    if (!raw) return fallback;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : fallback;
   }
 
   function renderChartRangeControls(session, rawMax, range) {
@@ -2813,18 +2998,18 @@
     const fullMax = chartRangeMax(rawMax);
     const step = chartRangeStep(fullMax);
     elements.chartRangeControls.hidden = false;
-    [
-      elements.chartRangeStart,
-      elements.chartRangeEnd,
-      elements.chartRangeStartSlider,
-      elements.chartRangeEndSlider,
-    ].filter(Boolean).forEach((input) => {
+    [elements.chartRangeStart, elements.chartRangeEnd].filter(Boolean).forEach((input) => {
+      input.min = "0";
+      input.max = String(fullMax);
+      input.step = "1";
+    });
+    [elements.chartRangeStartSlider, elements.chartRangeEndSlider].filter(Boolean).forEach((input) => {
       input.min = "0";
       input.max = String(fullMax);
       input.step = String(step);
     });
-    if (elements.chartRangeStart) elements.chartRangeStart.value = String(Math.round(range.start));
-    if (elements.chartRangeEnd) elements.chartRangeEnd.value = String(Math.round(range.end));
+    setRangeInputValue(elements.chartRangeStart, String(Math.round(range.start)));
+    setRangeInputValue(elements.chartRangeEnd, String(Math.round(range.end)));
     if (elements.chartRangeStartSlider) elements.chartRangeStartSlider.value = String(Math.round(range.start));
     if (elements.chartRangeEndSlider) elements.chartRangeEndSlider.value = String(Math.round(range.end));
     if (elements.chartRangeSummary) {
@@ -2837,6 +3022,12 @@
     const rightPercent = 100 - (range.end / fullMax) * 100;
     elements.chartRangeControls.style.setProperty("--range-left", `${leftPercent}%`);
     elements.chartRangeControls.style.setProperty("--range-right", `${rightPercent}%`);
+  }
+
+  function setRangeInputValue(input, value) {
+    if (!input) return;
+    if (document.activeElement === input && input.value !== value) return;
+    input.value = value;
   }
 
   function applyChartRange(chartData, range) {
@@ -2855,6 +3046,85 @@
     };
   }
 
+  function activeChartSelection(session) {
+    if (!session || state.chartSelectionSessionId !== session.id) return null;
+    const start = Math.min(state.chartSelectionStart, state.chartSelectionEnd);
+    const end = Math.max(state.chartSelectionStart, state.chartSelectionEnd);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < 5) return null;
+    return { start, end };
+  }
+
+  function drawChartSelection(ctx, plot, selection, xMin, xMax) {
+    if (!selection) return;
+    const visibleStart = clamp(selection.start, xMin, xMax);
+    const visibleEnd = clamp(selection.end, xMin, xMax);
+    if (visibleEnd - visibleStart <= 0) return;
+    const left = scale(visibleStart, xMin, xMax, plot.left, plot.right);
+    const right = scale(visibleEnd, xMin, xMax, plot.left, plot.right);
+    ctx.save();
+    ctx.fillStyle = "rgba(34, 216, 110, 0.14)";
+    ctx.strokeStyle = "rgba(34, 216, 110, 0.52)";
+    ctx.lineWidth = 1;
+    ctx.fillRect(left, plot.top, right - left, plot.height);
+    ctx.beginPath();
+    ctx.moveTo(left, plot.top);
+    ctx.lineTo(left, plot.bottom);
+    ctx.moveTo(right, plot.top);
+    ctx.lineTo(right, plot.bottom);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function chartSelectionStats(session, start, end) {
+    const chartData = getFullChartData(session);
+    const points = chartData.points
+      .filter((point) => point.chartX >= start && point.chartX <= end)
+      .sort((a, b) => a.chartX - b.chartX);
+    if (points.length < 2) return null;
+
+    const groups = new Map();
+    points.forEach((point) => {
+      const key = `${point.interval || 1}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(point);
+    });
+
+    let distance = 0;
+    let duration = 0;
+    groups.forEach((group) => {
+      const ordered = group
+        .filter((point) => Number.isFinite(point.localDistance) && Number.isFinite(point.localTime))
+        .sort((a, b) => a.localDistance - b.localDistance);
+      if (ordered.length < 2) return;
+      const first = ordered[0];
+      const last = ordered.at(-1);
+      const groupDistance = last.localDistance - first.localDistance;
+      const groupDuration = last.localTime - first.localTime;
+      if (groupDistance > 0) distance += groupDistance;
+      if (groupDuration > 0) duration += groupDuration;
+    });
+
+    const pace = duration > 0 && distance > 0
+      ? duration / (distance / 500)
+      : average(points.map((point) => point.pace));
+    return {
+      distance,
+      duration,
+      pace,
+      rate: average(points.map((point) => point.rate)),
+      strokes: points.length,
+      start,
+      end,
+    };
+  }
+
+  function formatChartSelectionSummary(stats) {
+    const distanceText = Number.isFinite(stats.distance) && stats.distance > 0
+      ? formatMetersCompact(stats.distance)
+      : `${Math.round(stats.end - stats.start)} m`;
+    return `Odabrano ${distanceText} · ${formatDurationTenths(stats.duration)} · ${formatSplitOnly(stats.pace)} /500 · ${formatNumber(stats.rate, 1)} spm`;
+  }
+
   function roundToStep(value, step) {
     if (!Number.isFinite(value)) return NaN;
     return Math.round(value / step) * step;
@@ -2864,7 +3134,7 @@
     const ctx = setupCanvas(canvas);
     clearCanvas(ctx, canvas);
     canvas._strokeHits = [];
-    const fullChartData = buildChartData(session);
+    const fullChartData = getFullChartData(session);
     const range = syncChartRangeForSession(session, fullChartData.xMax);
     renderChartRangeControls(session, fullChartData.xMax, range);
     const chartData = applyChartRange(fullChartData, range);
@@ -2879,6 +3149,12 @@
     const xMin = chartData.xMin || 0;
     const xMax = chartData.xMax;
     canvas._chartXMax = xMax;
+    canvas._chartPlot = plot;
+    canvas._chartRange = {
+      xMin,
+      xMax,
+      fullMax: chartRangeMax(fullChartData.xMax),
+    };
     const splitValues = points.map((point) => point.pace);
     const spmValues = points.map((point) => point.rate);
     const splitMin = minFinite(splitValues);
@@ -2888,6 +3164,8 @@
     const spmMax = maxFinite(spmValues) + 2;
 
     drawRaceGrid(ctx, plot, xMin, xMax, splitMin - splitPad, splitMax + splitPad + 4, spmMin, spmMax);
+    const selection = activeChartSelection(session);
+    drawChartSelection(ctx, plot, selection, xMin, xMax);
     chartData.series.forEach((serie) => {
       const rawSplit = serie.points.map((point) => ({ x: point.chartX, y: point.pace }));
       const spmLine = serie.points.map((point) => ({ x: point.chartX, y: point.rate }));
@@ -2908,12 +3186,14 @@
     const avgRate = average(points.map((point) => point.rate));
     drawAverageLine(ctx, plot, avgSplit, splitMin - splitPad, splitMax + splitPad + 4, true, COLORS.green, `avg ${formatSplitOnly(avgSplit)}`);
     drawAverageLine(ctx, plot, avgRate, spmMin, spmMax, false, "rgba(255,107,53,0.65)", `avg ${formatNumber(avgRate, 1)} spm`, true);
+    const selectionStats = selection ? chartSelectionStats(session, selection.start, selection.end) : null;
 
     elements.sessionLegend.innerHTML = `
       <span class="legend-item"><span class="legend-swatch" style="background:${COLORS.pace}"></span>Split /500m (lijeva os, invertirana)</span>
       <span class="legend-item"><span class="legend-swatch" style="background:${COLORS.rate}"></span>Tempo SPM (desna os)</span>
       <span class="legend-item"><span class="legend-line green-line"></span>Avg split (${formatSplitOnly(avgSplit)})</span>
       <span class="legend-item"><span class="legend-line orange-line"></span>Avg SPM (${formatNumber(avgRate, 1)})</span>
+      ${selectionStats ? `<span class="legend-item selection-summary"><span class="legend-line selection-line"></span>${escapeHtml(formatChartSelectionSummary(selectionStats))}</span>` : ""}
     `;
   }
 
@@ -2969,6 +3249,12 @@
     const spmMin = minFinite(points.map((point) => point.rate)) - 2;
     const spmMax = maxFinite(points.map((point) => point.rate)) + 2;
     const color = intervalColor(interval.index);
+    canvas._chartPlot = plot;
+    canvas._chartRange = {
+      xMin: 0,
+      xMax: distanceMax,
+      fullMax: distanceMax,
+    };
 
     drawRaceGrid(ctx, plot, 0, distanceMax, splitMin, splitMax, spmMin, spmMax);
     drawLineCustom(ctx, points.map((point) => ({ x: point.localDistance, y: point.pace })), plot, {
@@ -3475,6 +3761,20 @@
     ctx.restore();
   }
 
+  function getFullChartData(session) {
+    if (!session) return buildChartData(session);
+    const pointCount = Array.isArray(session.points) ? session.points.length : 0;
+    const intervalCount = Array.isArray(session.intervals) ? session.intervals.length : 0;
+    const cacheKey = `${session.id}|${pointCount}|${intervalCount}|${session.summary?.distance || 0}`;
+    if (session._chartDataCacheKey === cacheKey && session._chartDataCache) {
+      return session._chartDataCache;
+    }
+    const chartData = buildChartData(session);
+    session._chartDataCacheKey = cacheKey;
+    session._chartDataCache = chartData;
+    return chartData;
+  }
+
   function buildChartData(session) {
     if (!session) return { series: [], points: [], xMax: 100 };
     const intervals = session.intervals?.length ? session.intervals : buildIntervalData(session.points, []);
@@ -3526,8 +3826,12 @@
     ctx.textAlign = "center";
     chartData.series.forEach((serie, index) => {
       if (chartData.hasMultiple) {
-        ctx.fillStyle = "rgba(255,255,255,0.34)";
-        ctx.fillText(`I${serie.interval}`, (scale(serie.chartStart, 0, chartData.xMax, plot.left, plot.right) + scale(serie.chartEnd, 0, chartData.xMax, plot.left, plot.right)) / 2, plot.bottom + 13);
+        const labelStart = clamp(serie.chartStart, xMin, xMax);
+        const labelEnd = clamp(serie.chartEnd, xMin, xMax);
+        if (labelEnd > labelStart) {
+          ctx.fillStyle = "rgba(255,255,255,0.34)";
+          ctx.fillText(`I${serie.interval}`, scale((labelStart + labelEnd) / 2, xMin, xMax, plot.left, plot.right), plot.bottom + 13);
+        }
       }
       ctx.strokeStyle = "rgba(255,255,255,0.12)";
       ctx.setLineDash([5, 5]);
@@ -4033,6 +4337,11 @@
       return (outMin + outMax) / 2;
     }
     return outMin + ((value - min) / (max - min)) * (outMax - outMin);
+  }
+
+  function clamp(value, min, max) {
+    if (!Number.isFinite(value)) return min;
+    return Math.max(min, Math.min(max, value));
   }
 
   function gpsDistanceMeters(pointA, pointB) {
